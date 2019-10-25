@@ -1807,9 +1807,6 @@ dart:io,::,get:_OUTGOING_BUFFER_SIZE
 dart:io,::,_getHttpVersion
 dart:io,::,_setupHooks
 dart:io,::,_throwOnBadPort
-dart:mozart.internal,Mozart,offerServiceProvider
-dart:mozart.internal,Mozart,_offerServiceProvider
-dart:mozart.internal,MozartStartupInfo,takeViewContainer
 dart:ui,TextBaseline,get:index
 dart:ui,StrokeCap,get:index
 dart:ui,BlurStyle,get:index
@@ -1845,6 +1842,7 @@ dart:ui,TextStyle,get:_fontSize
 dart:ui,TextStyle,get:_letterSpacing
 dart:ui,TextStyle,get:_wordSpacing
 dart:ui,TextStyle,get:_height
+dart:ui,TextStyle,get:_locale
 dart:ui,FilterQuality,get:index
 dart:ui,ParagraphStyle,ParagraphStyle.
 dart:ui,ParagraphStyle,get:_encoded
@@ -1852,6 +1850,7 @@ dart:ui,ParagraphStyle,get:_fontFamily
 dart:ui,ParagraphStyle,get:_fontSize
 dart:ui,ParagraphStyle,get:_lineHeight
 dart:ui,ParagraphStyle,get:_ellipsis
+dart:ui,ParagraphStyle,get:_locale
 dart:ui,_Jenkins,combine
 dart:ui,_Jenkins,finish
 dart:ui,_HashEnd,_HashEnd.

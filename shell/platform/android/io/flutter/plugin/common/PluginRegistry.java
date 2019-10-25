@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,6 +7,7 @@ package io.flutter.plugin.common;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import io.flutter.plugin.platform.PlatformViewRegistry;
 import io.flutter.view.FlutterNativeView;
 import io.flutter.view.FlutterView;
 import io.flutter.view.TextureRegistry;
@@ -100,10 +101,40 @@ public interface PluginRegistry {
         TextureRegistry textures();
 
         /**
+         * Returns the application's {@link PlatformViewRegistry}.
+         *
+         * Plugins can use the platform registry to register their view factories.
+         */
+        PlatformViewRegistry platformViewRegistry();
+
+        /**
          * Returns the {@link FlutterView} that's instantiated by this plugin's
          * {@link #activity() activity}.
          */
         FlutterView view();
+
+
+        /**
+         * Returns the file name for the given asset.
+         * The returned file name can be used to access the asset in the APK
+         * through the {@link android.content.res.AssetManager} API.
+         *
+         * @param asset the name of the asset. The name can be hierarchical
+         * @return      the filename to be used with {@link android.content.res.AssetManager}
+         */
+        String lookupKeyForAsset(String asset);
+
+        /**
+         * Returns the file name for the given asset which originates from the
+         * specified packageName. The returned file name can be used to access
+         * the asset in the APK through the {@link android.content.res.AssetManager} API.
+         *
+         * @param asset       the name of the asset. The name can be hierarchical
+         * @param packageName the name of the package from which the asset originates
+         * @return            the file name to be used with {@link android.content.res.AssetManager}
+         */
+        String lookupKeyForAsset(String asset, String packageName);
+
 
         /**
          * Publishes a value associated with the plugin being registered.
@@ -131,21 +162,6 @@ public interface PluginRegistry {
          * @return this {@link Registrar}.
          */
         Registrar addRequestPermissionsResultListener(RequestPermissionsResultListener listener);
-
-        /**
-         * Adds a callback allowing the plugin to take part in handling incoming
-         * calls to {@code Activity#onRequestPermissionsResult(int, String[], int[])}
-         * or {@code android.support.v4.app.ActivityCompat.OnRequestPermissionsResultCallback#onRequestPermissionsResult(int, String[], int[])}.
-         *
-         * @param listener a {@link RequestPermissionResultListener} callback.
-         * @return this {@link Registrar}.
-
-         * @deprecated on 2018-01-02 because of misspelling. This method will be made unavailable
-         * on 2018-02-06 (or at least four weeks after the deprecation is released). Use
-         * {@link #addRequestPermissionsResultListener(RequestPermissionsResultListener)} instead.
-         */
-        @Deprecated
-        Registrar addRequestPermissionResultListener(RequestPermissionResultListener listener);
 
         /**
          * Adds a callback allowing the plugin to take part in handling incoming
@@ -193,25 +209,6 @@ public interface PluginRegistry {
          * @return true if the result has been handled.
          */
         boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults);
-    }
-
-    /**
-     * Delegate interface for handling result of permissions requests on
-     * behalf of the main {@link Activity}.
-     *
-     * Deprecated on 2018-01-02 because of misspelling. This interface will be made
-     * unavailable on 2018-02-06 (or at least four weeks after the deprecation is released).
-     * Use {@link RequestPermissionsResultListener} instead.
-     */
-    interface RequestPermissionResultListener {
-        /**
-         * @return true if the result has been handled.
-         * @deprecated on 2018-01-02 because of misspelling. This method will be made
-         * unavailable on 2018-02-06 (or at least four weeks after the deprecation is released).
-         * Use {@link RequestPermissionsResultListener} instead.
-         */
-        @Deprecated
-        boolean onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults);
     }
 
     /**

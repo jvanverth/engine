@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -25,10 +25,6 @@
 - (NSString*)textInRange:(UITextRange*)range {
   NSRange textRange = ((FlutterTextRange*)range).range;
   return [self.text substringWithRange:textRange];
-}
-
-- (NSString*)accessibilityLabel {
-  return self.text;
 }
 
 - (void)replaceRange:(UITextRange*)range withText:(NSString*)text {
@@ -173,7 +169,7 @@
   FlutterInactiveTextInput* _inactive_text_input;
 }
 
-- (instancetype)initWithBridge:(shell::AccessibilityBridge*)bridge uid:(int32_t)uid {
+- (instancetype)initWithBridge:(fml::WeakPtr<flutter::AccessibilityBridge>)bridge uid:(int32_t)uid {
   self = [super initWithBridge:bridge uid:uid];
 
   if (self) {
@@ -190,13 +186,13 @@
 
 #pragma mark - SemanticsObject overrides
 
-- (void)setSemanticsNode:(const blink::SemanticsNode*)node {
+- (void)setSemanticsNode:(const flutter::SemanticsNode*)node {
   [super setSemanticsNode:node];
   _inactive_text_input.text = @(node->value.data());
-  if ([self node].HasFlag(blink::SemanticsFlags::kIsFocused)) {
+  if ([self node].HasFlag(flutter::SemanticsFlags::kIsFocused)) {
     // The text input view must have a non-trivial size for the accessibility
     // system to send text editing events.
-    [self bridge]->textInputView().frame = CGRectMake(0.0, 0.0, 1.0, 1.0);
+    [self bridge] -> textInputView().frame = CGRectMake(0.0, 0.0, 1.0, 1.0);
   }
 }
 
@@ -211,8 +207,8 @@
  * we use an FlutterInactiveTextInput.
  */
 - (UIView<UITextInput>*)textInputSurrogate {
-  if ([self node].HasFlag(blink::SemanticsFlags::kIsFocused)) {
-    return [self bridge]->textInputView();
+  if ([self node].HasFlag(flutter::SemanticsFlags::kIsFocused)) {
+    return [self bridge] -> textInputView();
   } else {
     return _inactive_text_input;
   }
@@ -233,7 +229,7 @@
 }
 
 - (BOOL)accessibilityElementIsFocused {
-  return [self node].HasFlag(blink::SemanticsFlags::kIsFocused);
+  return [self node].HasFlag(flutter::SemanticsFlags::kIsFocused);
 }
 
 - (BOOL)accessibilityActivate {
@@ -241,14 +237,23 @@
 }
 
 - (NSString*)accessibilityLabel {
+  NSString* label = [super accessibilityLabel];
+  if (label != nil)
+    return label;
   return [self textInputSurrogate].accessibilityLabel;
 }
 
 - (NSString*)accessibilityHint {
+  NSString* hint = [super accessibilityHint];
+  if (hint != nil)
+    return hint;
   return [self textInputSurrogate].accessibilityHint;
 }
 
 - (NSString*)accessibilityValue {
+  NSString* value = [super accessibilityValue];
+  if (value != nil)
+    return value;
   return [self textInputSurrogate].accessibilityValue;
 }
 
@@ -256,7 +261,8 @@
   // Adding UIAccessibilityTraitKeyboardKey to the trait list so that iOS treats it like
   // a keyboard entry control, thus adding support for text editing features, such as
   // pinch to select text, and up/down fling to move cursor.
-  return [self textInputSurrogate].accessibilityTraits | UIAccessibilityTraitKeyboardKey;
+  return [super accessibilityTraits] | [self textInputSurrogate].accessibilityTraits |
+         UIAccessibilityTraitKeyboardKey;
 }
 
 #pragma mark - UITextInput overrides
@@ -337,8 +343,9 @@
 - (UITextPosition*)positionFromPosition:(UITextPosition*)position
                             inDirection:(UITextLayoutDirection)direction
                                  offset:(NSInteger)offset {
-  return
-      [[self textInputSurrogate] positionFromPosition:position inDirection:direction offset:offset];
+  return [[self textInputSurrogate] positionFromPosition:position
+                                             inDirection:direction
+                                                  offset:offset];
 }
 
 - (NSComparisonResult)comparePosition:(UITextPosition*)position toPosition:(UITextPosition*)other {
@@ -356,8 +363,8 @@
 
 - (UITextRange*)characterRangeByExtendingPosition:(UITextPosition*)position
                                       inDirection:(UITextLayoutDirection)direction {
-  return
-      [[self textInputSurrogate] characterRangeByExtendingPosition:position inDirection:direction];
+  return [[self textInputSurrogate] characterRangeByExtendingPosition:position
+                                                          inDirection:direction];
 }
 
 - (UITextWritingDirection)baseWritingDirectionForPosition:(UITextPosition*)position

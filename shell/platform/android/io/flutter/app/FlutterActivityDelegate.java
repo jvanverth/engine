@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -24,23 +24,16 @@ import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
-import android.widget.FrameLayout;
-import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.PluginRegistry;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 import io.flutter.plugin.platform.PlatformPlugin;
 import io.flutter.util.Preconditions;
 import io.flutter.view.FlutterMain;
 import io.flutter.view.FlutterNativeView;
+import io.flutter.view.FlutterRunArguments;
 import io.flutter.view.FlutterView;
-import io.flutter.view.TextureRegistry;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 
 /**
  * Class that performs the actual work of tying Android {@link Activity}
@@ -63,7 +56,8 @@ public final class FlutterActivityDelegate
         implements FlutterActivityEvents,
                    FlutterView.Provider,
                    PluginRegistry {
-    private static final String SPLASH_SCREEN_META_DATA_KEY = "io.flutter.app.android.SplashScreenUntilFirstFrame";
+    private static final String SPLASH_SCREEN_META_DATA_KEY =
+        "io.flutter.app.android.SplashScreenUntilFirstFrame";
     private static final String TAG = "FlutterActivityDelegate";
     private static final LayoutParams matchParent =
         new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT);
@@ -85,6 +79,13 @@ public final class FlutterActivityDelegate
     public interface ViewFactory {
         FlutterView createFlutterView(Context context);
         FlutterNativeView createFlutterNativeView();
+
+        /**
+         * Hook for subclasses to indicate that the {@code FlutterNativeView}
+         * returned by {@link #createFlutterNativeView()} should not be destroyed
+         * when this activity is destroyed.
+         */
+        boolean retainFlutterNativeView();
     }
 
     private final Activity activity;
@@ -126,13 +127,6 @@ public final class FlutterActivityDelegate
     }
 
     @Override
-    @Deprecated
-    public boolean onRequestPermissionResult(
-            int requestCode, String[] permissions, int[] grantResults) {
-        return onRequestPermissionsResult(requestCode, permissions, grantResults);
-    }
-
-    @Override
     public boolean onActivityResult(int requestCode, int resultCode, Intent data) {
         return flutterView.getPluginRegistry().onActivityResult(requestCode, resultCode, data);
     }
@@ -161,18 +155,13 @@ public final class FlutterActivityDelegate
             }
         }
 
-        // When an activity is created for the first time, we direct the
-        // FlutterView to re-use a pre-existing Isolate rather than create a new
-        // one. This is so that an Isolate coming in from the ViewFactory is
-        // used.
-        final boolean reuseIsolate = true;
-
-        if (loadIntent(activity.getIntent(), reuseIsolate)) {
+        if (loadIntent(activity.getIntent())) {
             return;
         }
-        String appBundlePath = FlutterMain.findAppBundlePath(activity.getApplicationContext());
+
+        String appBundlePath = FlutterMain.findAppBundlePath();
         if (appBundlePath != null) {
-            flutterView.runFromBundle(appBundlePath, null, "main", reuseIsolate);
+            runBundle(appBundlePath);
         }
     }
 
@@ -194,8 +183,7 @@ public final class FlutterActivityDelegate
         Application app = (Application) activity.getApplicationContext();
         if (app instanceof FlutterApplication) {
             FlutterApplication flutterApp = (FlutterApplication) app;
-            if (this.equals(flutterApp.getCurrentActivity())) {
-                Log.i(TAG, "onPause setting current activity to null");
+            if (activity.equals(flutterApp.getCurrentActivity())) {
                 flutterApp.setCurrentActivity(null);
             }
         }
@@ -205,15 +193,24 @@ public final class FlutterActivityDelegate
     }
 
     @Override
+    public void onStart() {
+        if (flutterView != null) {
+            flutterView.onStart();
+        }
+    }
+
+    @Override
     public void onResume() {
         Application app = (Application) activity.getApplicationContext();
         if (app instanceof FlutterApplication) {
             FlutterApplication flutterApp = (FlutterApplication) app;
-            Log.i(TAG, "onResume setting current activity to this");
             flutterApp.setCurrentActivity(activity);
-        } else {
-            Log.i(TAG, "onResume app wasn't a FlutterApplication!!");
         }
+    }
+
+    @Override
+    public void onStop() {
+        flutterView.onStop();
     }
 
     @Override
@@ -228,15 +225,14 @@ public final class FlutterActivityDelegate
         Application app = (Application) activity.getApplicationContext();
         if (app instanceof FlutterApplication) {
             FlutterApplication flutterApp = (FlutterApplication) app;
-            if (this.equals(flutterApp.getCurrentActivity())) {
-                Log.i(TAG, "onDestroy setting current activity to null");
+            if (activity.equals(flutterApp.getCurrentActivity())) {
                 flutterApp.setCurrentActivity(null);
             }
         }
         if (flutterView != null) {
             final boolean detach =
                 flutterView.getPluginRegistry().onViewDestroy(flutterView.getFlutterNativeView());
-            if (detach) {
+            if (detach || viewFactory.retainFlutterNativeView()) {
                 // Detach, but do not destroy the FlutterView if a plugin
                 // expressed interest in its FlutterNativeView.
                 flutterView.detach();
@@ -275,19 +271,21 @@ public final class FlutterActivityDelegate
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
-    }
+    public void onConfigurationChanged(Configuration newConfig) {}
 
     private static String[] getArgsFromIntent(Intent intent) {
         // Before adding more entries to this list, consider that arbitrary
         // Android applications can generate intents with extra data and that
         // there are many security-sensitive args in the binary.
-        ArrayList<String> args = new ArrayList<String>();
+        ArrayList<String> args = new ArrayList<>();
         if (intent.getBooleanExtra("trace-startup", false)) {
             args.add("--trace-startup");
         }
         if (intent.getBooleanExtra("start-paused", false)) {
             args.add("--start-paused");
+        }
+        if (intent.getBooleanExtra("disable-service-auth-codes", false)) {
+            args.add("--disable-service-auth-codes");
         }
         if (intent.getBooleanExtra("use-test-fonts", false)) {
             args.add("--use-test-fonts");
@@ -304,6 +302,32 @@ public final class FlutterActivityDelegate
         if (intent.getBooleanExtra("trace-skia", false)) {
             args.add("--trace-skia");
         }
+        if (intent.getBooleanExtra("trace-systrace", false)) {
+            args.add("--trace-systrace");
+        }
+        if (intent.getBooleanExtra("dump-skp-on-shader-compilation", false)) {
+            args.add("--dump-skp-on-shader-compilation");
+        }
+        if (intent.getBooleanExtra("cache-sksl", false)) {
+            args.add("--cache-sksl");
+        }
+        if (intent.getBooleanExtra("verbose-logging", false)) {
+            args.add("--verbose-logging");
+        }
+        final int observatoryPort = intent.getIntExtra("observatory-port", 0);
+        if (observatoryPort > 0) {
+            args.add("--observatory-port=" + Integer.toString(observatoryPort));
+        }
+        if (intent.getBooleanExtra("disable-service-auth-codes", false)) {
+            args.add("--disable-service-auth-codes");
+        }
+        // NOTE: all flags provided with this argument are subject to filtering
+        // based on a whitelist in shell/common/switches.cc. If any flag provided
+        // is not present in the whitelist, the process will immediately
+        // terminate.
+        if (intent.hasExtra("dart-flags")) {
+            args.add("--dart-flags=" + intent.getStringExtra("dart-flags"));
+        }
         if (!args.isEmpty()) {
             String[] argsArray = new String[args.size()];
             return args.toArray(argsArray);
@@ -312,28 +336,32 @@ public final class FlutterActivityDelegate
     }
 
     private boolean loadIntent(Intent intent) {
-        final boolean reuseIsolate = false;
-        return loadIntent(intent, reuseIsolate);
-    }
-
-    private boolean loadIntent(Intent intent, boolean reuseIsolate) {
         String action = intent.getAction();
         if (Intent.ACTION_RUN.equals(action)) {
             String route = intent.getStringExtra("route");
             String appBundlePath = intent.getDataString();
             if (appBundlePath == null) {
-                // Fall back to the installation path if no bundle path
-                // was specified.
-                appBundlePath = FlutterMain.findAppBundlePath(activity.getApplicationContext());
+                // Fall back to the installation path if no bundle path was specified.
+                appBundlePath = FlutterMain.findAppBundlePath();
             }
             if (route != null) {
                 flutterView.setInitialRoute(route);
             }
-            flutterView.runFromBundle(appBundlePath, intent.getStringExtra("snapshot"), "main", reuseIsolate);
+
+            runBundle(appBundlePath);
             return true;
         }
 
         return false;
+    }
+
+    private void runBundle(String appBundlePath) {
+        if (!flutterView.getFlutterNativeView().isApplicationRunning()) {
+            FlutterRunArguments args = new FlutterRunArguments();
+            args.bundlePath = appBundlePath;
+            args.entrypoint = "main";
+            flutterView.runFromBundle(args);
+        }
     }
 
     /**
@@ -371,7 +399,7 @@ public final class FlutterActivityDelegate
         if (!activity.getTheme().resolveAttribute(
             android.R.attr.windowBackground,
             typedValue,
-            true)) {;
+            true)) {
             return null;
         }
         if (typedValue.resourceId == 0) {
