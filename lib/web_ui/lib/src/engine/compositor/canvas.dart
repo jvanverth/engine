@@ -2,99 +2,272 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @dart = 2.10
 part of engine;
 
-/// An actual [SkCanvas] which can receive raw drawing commands.
+/// A Dart wrapper around Skia's [SkCanvas].
 ///
-/// In order for the drawing commands to be flushed to the associated HTML
-/// canvas, you must call `flush()` on the canvas's `SkSurface`.
-///
-/// Although this class is backed by an `SkCanvas` and can in theory perform
-/// arbitrary drawing operations, this class is only used in the final
-/// compositing by the layers, and arbitrary drawings are done in a
-/// [ui.Picture] which uses a Skia recording canvas. This class receives
-/// drawing calls from the various `Layer` classes, e.g. [ClipRectLayer] and
-/// so only exposes a subset of the drawing operations that can be performed
-/// on a canvas.
-class SkCanvas {
-  final js.JsObject skCanvas;
-  final html.CanvasElement htmlCanvas;
-  final js.JsObject skSurface;
-  final ui.Size size;
+/// This is intentionally not memory-managing the underlying [SkCanvas]. See
+/// the docs on [SkCanvas], which explain the reason.
+class CkCanvas {
+  final SkCanvas skCanvas;
 
-  SkCanvas(this.skCanvas, this.htmlCanvas, this.skSurface, this.size);
+  CkCanvas(this.skCanvas);
 
-  int save() {
-    return skCanvas.callMethod('save');
+  int? get saveCount => skCanvas.getSaveCount();
+
+  void clear(ui.Color color) {
+    skCanvas.clear(toSharedSkColor1(color));
   }
 
-  int saveLayer(ui.Rect bounds, ui.Paint paint) {
-    return skCanvas.callMethod(
-        'saveLayer', <js.JsObject>[makeSkRect(bounds), makeSkPaint(paint)]);
-  }
+  static final SkClipOp _clipOpIntersect = canvasKit.ClipOp.Intersect;
 
-  void restore() {
-    skCanvas.callMethod('restore');
-  }
-
-  void restoreToCount(int count) {
-    skCanvas.callMethod('restoreToCount', <int>[count]);
-  }
-
-  void clear() {
-    skCanvas.callMethod('clear', <int>[0xffffffff]);
-  }
-
-  void translate(double dx, double dy) {
-    skCanvas.callMethod('translate', <double>[dx, dy]);
-  }
-
-  void transform(Float64List matrix) {
-    skCanvas.callMethod('concat', <js.JsArray<double>>[makeSkMatrix(matrix)]);
-  }
-
-  void clipPath(ui.Path path, {bool doAntiAlias = true}) {
-    final SkPath skPath = path;
-    final js.JsObject intersectClipOp = canvasKit['ClipOp']['Intersect'];
-    skCanvas.callMethod('clipPath', <dynamic>[
-      skPath._skPath,
-      intersectClipOp,
+  void clipPath(ui.Path path, bool doAntiAlias) {
+    final CkPath ckPath = path as CkPath;
+    skCanvas.clipPath(
+      ckPath._skPath,
+      _clipOpIntersect,
       doAntiAlias,
-    ]);
+    );
   }
 
-  void clipRect(ui.Rect rect, {bool doAntiAlias = true}) {
-    final js.JsObject intersectClipOp = canvasKit['ClipOp']['Intersect'];
-    skCanvas.callMethod('clipRect', <dynamic>[
-      makeSkRect(rect),
-      intersectClipOp,
+  void clipRRect(ui.RRect rrect, bool doAntiAlias) {
+    skCanvas.clipRRect(
+      toSkRRect(rrect),
+      _clipOpIntersect,
       doAntiAlias,
-    ]);
+    );
   }
 
-  void clipRRect(ui.RRect rrect) {
-    final SkPath skPath = SkPath();
-    skPath.addRRect(rrect);
-    clipPath(skPath);
+  void clipRect(ui.Rect rect, ui.ClipOp clipOp, bool doAntiAlias) {
+    skCanvas.clipRect(
+      toSkRect(rect),
+      toSkClipOp(clipOp),
+      doAntiAlias,
+    );
   }
 
-  void drawPicture(ui.Picture picture) {
-    final SkPicture skPicture = picture;
-    skCanvas.callMethod('drawPicture', <js.JsObject>[skPicture.skPicture]);
+  void drawArc(
+    ui.Rect oval,
+    double startAngle,
+    double sweepAngle,
+    bool useCenter,
+    CkPaint paint,
+  ) {
+    const double toDegrees = 180 / math.pi;
+    skCanvas.drawArc(
+      toSkRect(oval),
+      startAngle * toDegrees,
+      sweepAngle * toDegrees,
+      useCenter,
+      paint.skiaObject,
+    );
   }
 
-  void drawPath(ui.Path path, ui.Paint paint) {
-    final SkPath skPath = path;
-    skCanvas.callMethod(
-        'drawPath', <js.JsObject>[skPath._skPath, makeSkPaint(paint)]);
+  void drawAtlasRaw(
+    CkPaint paint,
+    ui.Image atlas,
+    Float32List rstTransforms,
+    Float32List rects,
+    List<Float32List>? colors,
+    ui.BlendMode blendMode,
+  ) {
+    final CkImage skAtlas = atlas as CkImage;
+    skCanvas.drawAtlas(
+      skAtlas.skImage,
+      rects,
+      rstTransforms,
+      paint.skiaObject,
+      toSkBlendMode(blendMode),
+      colors,
+    );
   }
 
-  void drawPaint(ui.Paint paint) {
-    skCanvas.callMethod('drawPaint', <js.JsObject>[makeSkPaint(paint)]);
+  void drawCircle(ui.Offset c, double radius, CkPaint paint) {
+    skCanvas.drawCircle(
+      c.dx,
+      c.dy,
+      radius,
+      paint.skiaObject,
+    );
+  }
+
+  void drawColor(ui.Color color, ui.BlendMode blendMode) {
+    skCanvas.drawColorInt(
+      color.value,
+      toSkBlendMode(blendMode),
+    );
+  }
+
+  void drawDRRect(ui.RRect outer, ui.RRect inner, CkPaint paint) {
+    skCanvas.drawDRRect(
+      toSkRRect(outer),
+      toSkRRect(inner),
+      paint.skiaObject,
+    );
+  }
+
+  void drawImage(ui.Image image, ui.Offset offset, CkPaint paint) {
+    final CkImage skImage = image as CkImage;
+    skCanvas.drawImage(
+      skImage.skImage,
+      offset.dx,
+      offset.dy,
+      paint.skiaObject,
+    );
+  }
+
+  void drawImageRect(ui.Image image, ui.Rect src, ui.Rect dst, CkPaint paint) {
+    final CkImage skImage = image as CkImage;
+    skCanvas.drawImageRect(
+      skImage.skImage,
+      toSkRect(src),
+      toSkRect(dst),
+      paint.skiaObject,
+      false,
+    );
+  }
+
+  void drawImageNine(
+      ui.Image image, ui.Rect center, ui.Rect dst, CkPaint paint) {
+    final CkImage skImage = image as CkImage;
+    skCanvas.drawImageNine(
+      skImage.skImage,
+      toSkRect(center),
+      toSkRect(dst),
+      paint.skiaObject,
+    );
+  }
+
+  void drawLine(ui.Offset p1, ui.Offset p2, CkPaint paint) {
+    skCanvas.drawLine(
+      p1.dx,
+      p1.dy,
+      p2.dx,
+      p2.dy,
+      paint.skiaObject,
+    );
+  }
+
+  void drawOval(ui.Rect rect, CkPaint paint) {
+    skCanvas.drawOval(
+      toSkRect(rect),
+      paint.skiaObject,
+    );
+  }
+
+  void drawPaint(CkPaint paint) {
+    skCanvas.drawPaint(paint.skiaObject);
+  }
+
+  void drawParagraph(CkParagraph paragraph, ui.Offset offset) {
+    skCanvas.drawParagraph(
+      paragraph.skiaObject,
+      offset.dx,
+      offset.dy,
+    );
+  }
+
+  void drawPath(CkPath path, CkPaint paint) {
+    skCanvas.drawPath(path._skPath, paint.skiaObject);
+  }
+
+  void drawPicture(CkPicture picture) {
+    skCanvas.drawPicture(picture.skiaObject.skiaObject);
+  }
+
+  void drawPoints(CkPaint paint, ui.PointMode pointMode,
+      Float32List points) {
+    skCanvas.drawPoints(
+      toSkPointMode(pointMode),
+      points,
+      paint.skiaObject,
+    );
+  }
+
+  void drawRRect(ui.RRect rrect, CkPaint paint) {
+    skCanvas.drawRRect(
+      toSkRRect(rrect),
+      paint.skiaObject,
+    );
+  }
+
+  void drawRect(ui.Rect rect, CkPaint paint) {
+    skCanvas.drawRect(toSkRect(rect), paint.skiaObject);
   }
 
   void drawShadow(ui.Path path, ui.Color color, double elevation,
       bool transparentOccluder) {
-    drawSkShadow(skCanvas, path, color, elevation, transparentOccluder);
+    drawSkShadow(skCanvas, path as CkPath, color, elevation,
+        transparentOccluder, ui.window.devicePixelRatio);
+  }
+
+  void drawVertices(
+      ui.Vertices vertices, ui.BlendMode blendMode, CkPaint paint) {
+    CkVertices skVertices = vertices as CkVertices;
+    skCanvas.drawVertices(
+      skVertices.skiaObject,
+      toSkBlendMode(blendMode),
+      paint.skiaObject,
+    );
+  }
+
+  void restore() {
+    skCanvas.restore();
+  }
+
+  void restoreToCount(int count) {
+    skCanvas.restoreToCount(count);
+  }
+
+  void rotate(double radians) {
+    skCanvas.rotate(radians * 180.0 / math.pi, 0.0, 0.0);
+  }
+
+  int save() {
+    return skCanvas.save();
+  }
+
+  void saveLayer(ui.Rect bounds, CkPaint paint) {
+    skCanvas.saveLayer(
+      toSkRect(bounds),
+      paint.skiaObject,
+    );
+  }
+
+  void saveLayerWithoutBounds(CkPaint paint) {
+    final SkCanvasSaveLayerWithoutBoundsOverload override = skCanvas as SkCanvasSaveLayerWithoutBoundsOverload;
+    override.saveLayer(paint.skiaObject);
+  }
+
+  void saveLayerWithFilter(ui.Rect bounds, ui.ImageFilter filter) {
+    final SkCanvasSaveLayerWithFilterOverload override = skCanvas as SkCanvasSaveLayerWithFilterOverload;
+    final CkImageFilter skImageFilter = filter as CkImageFilter;
+    return override.saveLayer(
+      null,
+      skImageFilter.skiaObject,
+      0,
+      toSkRect(bounds),
+    );
+  }
+
+  void scale(double sx, double sy) {
+    skCanvas.scale(sx, sy);
+  }
+
+  void skew(double sx, double sy) {
+    skCanvas.skew(sx, sy);
+  }
+
+  void transform(Float32List matrix4) {
+    skCanvas.concat(toSkMatrixFromFloat32(matrix4));
+  }
+
+  void translate(double dx, double dy) {
+    skCanvas.translate(dx, dy);
+  }
+
+  void flush() {
+    skCanvas.flush();
   }
 }

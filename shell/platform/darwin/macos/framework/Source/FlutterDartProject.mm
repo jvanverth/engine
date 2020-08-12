@@ -12,6 +12,8 @@ static NSString* const kAppBundleIdentifier = @"io.flutter.flutter.app";
 
 @implementation FlutterDartProject {
   NSBundle* _dartBundle;
+  NSString* _assetsPath;
+  NSString* _ICUDataPath;
 }
 
 - (instancetype)init {
@@ -26,14 +28,26 @@ static NSString* const kAppBundleIdentifier = @"io.flutter.flutter.app";
   return self;
 }
 
+- (instancetype)initWithAssetsPath:(NSString*)assets ICUDataPath:(NSString*)icuPath {
+  self = [super init];
+  NSAssert(self, @"Super init cannot be nil");
+  _assetsPath = assets;
+  _ICUDataPath = icuPath;
+  return self;
+}
+
 - (NSString*)assetsPath {
+  if (_assetsPath) {
+    return _assetsPath;
+  }
+
   // If there's no App.framework, fall back to checking the main bundle for assets.
   NSBundle* assetBundle = _dartBundle ?: [NSBundle mainBundle];
   NSString* flutterAssetsName = [assetBundle objectForInfoDictionaryKey:@"FLTAssetsPath"];
   if (flutterAssetsName == nil) {
     flutterAssetsName = @"flutter_assets";
   }
-  NSString* path = [_dartBundle pathForResource:flutterAssetsName ofType:@""];
+  NSString* path = [assetBundle pathForResource:flutterAssetsName ofType:@""];
   if (!path) {
     NSLog(@"Failed to find path for \"%@\"", flutterAssetsName);
   }
@@ -41,6 +55,10 @@ static NSString* const kAppBundleIdentifier = @"io.flutter.flutter.app";
 }
 
 - (NSString*)ICUDataPath {
+  if (_ICUDataPath) {
+    return _ICUDataPath;
+  }
+
   NSString* path = [[NSBundle bundleForClass:[self class]] pathForResource:kICUBundlePath
                                                                     ofType:nil];
   if (!path) {

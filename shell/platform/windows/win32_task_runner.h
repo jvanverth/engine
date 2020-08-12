@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <queue>
 #include <thread>
@@ -23,7 +24,8 @@ namespace flutter {
 class Win32TaskRunner {
  public:
   using TaskExpiredCallback = std::function<void(const FlutterTask*)>;
-  Win32TaskRunner(DWORD main_thread_id, TaskExpiredCallback on_task_expired);
+  Win32TaskRunner(DWORD main_thread_id,
+                  const TaskExpiredCallback& on_task_expired);
 
   ~Win32TaskRunner();
 
@@ -55,7 +57,6 @@ class Win32TaskRunner {
   TaskExpiredCallback on_task_expired_;
   std::mutex task_queue_mutex_;
   std::priority_queue<Task, std::deque<Task>, Task::Comparer> task_queue_;
-  std::condition_variable task_queue_cv_;
 
   Win32TaskRunner(const Win32TaskRunner&) = delete;
 

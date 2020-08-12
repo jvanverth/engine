@@ -10,6 +10,7 @@ import argparse
 import errno
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -32,8 +33,7 @@ def IsLinux():
 def IsMac():
   return platform.system() == 'Darwin'
 
-
-def GetPMBinPath():
+def GetFuchsiaSDKPath():
   # host_os references the gn host_os
   # https://gn.googlesource.com/gn/+/master/docs/reference.md#var_host_os
   host_os = ''
@@ -44,7 +44,11 @@ def GetPMBinPath():
   else:
     host_os = 'windows'
 
-  return os.path.join(_src_root_dir, 'fuchsia', 'sdk', host_os, 'tools', 'pm')
+  return os.path.join(_src_root_dir, 'fuchsia', 'sdk', host_os)
+
+
+def GetPMBinPath():
+  return os.path.join(GetFuchsiaSDKPath(), 'tools', 'pm')
 
 
 def RunExecutable(command):
@@ -110,6 +114,10 @@ def CopyGenSnapshotIfExists(source, destination):
   FindFileAndCopyTo('gen_snapshot_product', source_root, destination_base)
   FindFileAndCopyTo('kernel_compiler.dart.snapshot', source_root,
                     destination_base, 'kernel_compiler.snapshot')
+  FindFileAndCopyTo('frontend_server.dart.snapshot', source_root,
+                    destination_base, 'flutter_frontend_server.snapshot')
+  FindFileAndCopyTo('list_libraries.dart.snapshot', source_root,
+                    destination_base, 'list_libraries.snapshot')
 
 
 def CopyFlutterTesterBinIfExists(source, destination):
@@ -147,23 +155,60 @@ def CopyToBucket(src, dst, product=False):
   CopyToBucketWithMode(src, dst, True, product, 'dart')
 
 
+def CopyVulkanDepsToBucket(src, dst, arch):
+  sdk_path = GetFuchsiaSDKPath()
+  deps_bucket_path = os.path.join(_bucket_directory, dst)
+  if not os.path.exists(deps_bucket_path):
+    FindFileAndCopyTo('VkLayer_khronos_validation.json', '%s/pkg' % (sdk_path), deps_bucket_path)
+    FindFileAndCopyTo('VkLayer_khronos_validation.so', '%s/arch/%s' % (sdk_path, arch), deps_bucket_path)
+
+def CopyIcuDepsToBucket(src, dst):
+  source_root = os.path.join(_out_dir, src)
+  deps_bucket_path = os.path.join(_bucket_directory, dst)
+  FindFileAndCopyTo('icudtl.dat', source_root, deps_bucket_path)
+
 def BuildBucket(runtime_mode, arch, product):
   out_dir = 'fuchsia_%s_%s/' % (runtime_mode, arch)
   bucket_dir = 'flutter/%s/%s/' % (arch, runtime_mode)
+  deps_dir = 'flutter/%s/deps/' % (arch)
   CopyToBucket(out_dir, bucket_dir, product)
+  CopyVulkanDepsToBucket(out_dir, deps_dir, arch)
+  CopyIcuDepsToBucket(out_dir, deps_dir)
 
 
-def ProcessCIPDPakcage(upload, engine_version):
+def CheckCIPDPackageExists(package_name, tag):
+  '''Check to see if the current package/tag combo has been published'''
+  command = [
+    'cipd',
+    'search',
+    package_name,
+    '-tag',
+    tag,
+  ]
+  stdout = subprocess.check_output(command)
+  match = re.search(r'No matching instances\.', stdout)
+  if match:
+    return False
+  else:
+    return True
+
+
+def ProcessCIPDPackage(upload, engine_version):
   # Copy the CIPD YAML template from the source directory to be next to the bucket
   # we are about to package.
   cipd_yaml = os.path.join(_script_dir, 'fuchsia.cipd.yaml')
   CopyFiles(cipd_yaml, os.path.join(_bucket_directory, 'fuchsia.cipd.yaml'))
 
-  if upload and IsLinux():
+  tag = 'git_revision:%s' % engine_version
+  already_exists = CheckCIPDPackageExists('flutter/fuchsia', tag)
+  if already_exists:
+    print('CIPD package flutter/fuchsia tag %s already exists!' % tag)
+
+  if upload and IsLinux() and not already_exists:
     command = [
         'cipd', 'create', '-pkg-def', 'fuchsia.cipd.yaml', '-ref', 'latest',
         '-tag',
-        'git_revision:%s' % engine_version
+        tag,
     ]
   else:
     command = [
@@ -171,8 +216,18 @@ def ProcessCIPDPakcage(upload, engine_version):
         os.path.join(_bucket_directory, 'fuchsia.cipd')
     ]
 
-  subprocess.check_call(command, cwd=_bucket_directory)
-
+  # Retry up to three times.  We've seen CIPD fail on verification in some
+  # instances. Normally verification takes slightly more than 1 minute when
+  # it succeeds.
+  num_tries = 3
+  for tries in range(num_tries):
+    try:
+      subprocess.check_call(command, cwd=_bucket_directory)
+      break
+    except subprocess.CalledProcessError:
+      print('Failed %s times' % tries + 1)
+      if tries == num_tries - 1:
+        raise
 
 def GetRunnerTarget(runner_type, product, aot):
   base = '%s/%s:' % (_fuchsia_base, runner_type)
@@ -189,15 +244,7 @@ def GetRunnerTarget(runner_type, product, aot):
   target += 'runner'
   return base + target
 
-
-def GetTargetsToBuild(product=False):
-  targets_to_build = [
-      'flutter/shell/platform/fuchsia:fuchsia',
-  ]
-  return targets_to_build
-
-
-def BuildTarget(runtime_mode, arch, product, enable_lto):
+def BuildTarget(runtime_mode, arch, enable_lto, additional_targets=[]):
   out_dir = 'fuchsia_%s_%s' % (runtime_mode, arch)
   flags = [
       '--fuchsia',
@@ -211,7 +258,7 @@ def BuildTarget(runtime_mode, arch, product, enable_lto):
     flags.append('--no-lto')
 
   RunGN(out_dir, flags)
-  BuildNinjaTargets(out_dir, GetTargetsToBuild(product))
+  BuildNinjaTargets(out_dir, [ 'flutter' ] + additional_targets)
 
   return
 
@@ -227,7 +274,7 @@ def main():
 
   parser.add_argument(
       '--engine-version',
-      required=True,
+      required=False,
       help='Specifies the flutter engine SHA.')
 
   parser.add_argument(
@@ -251,6 +298,12 @@ def main():
       default=False,
       help='If set, skips building and just creates packages.')
 
+  parser.add_argument(
+      '--targets',
+      default='',
+      help=('Comma-separated list; adds additional targets to build for '
+           'Fuchsia.'))
+
   args = parser.parse_args()
   RemoveDirectoryIfExists(_bucket_directory)
   build_mode = args.runtime_mode
@@ -267,11 +320,16 @@ def main():
       product = product_modes[i]
       if build_mode == 'all' or runtime_mode == build_mode:
         if not args.skip_build:
-          BuildTarget(runtime_mode, arch, product, enable_lto)
+          BuildTarget(runtime_mode, arch, enable_lto, args.targets.split(","))
         BuildBucket(runtime_mode, arch, product)
 
-  ProcessCIPDPakcage(args.upload, args.engine_version)
+  if args.upload:
+    if args.engine_version is None:
+      print('--upload requires --engine-version to be specified.')
+      return 1
+    ProcessCIPDPackage(args.upload, args.engine_version)
+  return 0
 
 
 if __name__ == '__main__':
-  main()
+  sys.exit(main())

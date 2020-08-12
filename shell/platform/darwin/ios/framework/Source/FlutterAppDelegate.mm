@@ -48,13 +48,24 @@ static NSString* kBackgroundFetchCapatibility = @"fetch";
   return nil;
 }
 
-+ (void)handleStatusBarTouches:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-  [self.rootFlutterViewController handleStatusBarTouches:event];
+// Do not remove, some clients may be calling these via `super`.
+- (void)applicationDidEnterBackground:(UIApplication*)application {
 }
 
-- (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
-  [super touchesBegan:touches withEvent:event];
-  [[self class] handleStatusBarTouches:touches withEvent:event];
+// Do not remove, some clients may be calling these via `super`.
+- (void)applicationWillEnterForeground:(UIApplication*)application {
+}
+
+// Do not remove, some clients may be calling these via `super`.
+- (void)applicationWillResignActive:(UIApplication*)application {
+}
+
+// Do not remove, some clients may be calling these via `super`.
+- (void)applicationDidBecomeActive:(UIApplication*)application {
+}
+
+// Do not remove, some clients may be calling these via `super`.
+- (void)applicationWillTerminate:(UIApplication*)application {
 }
 
 #pragma GCC diagnostic push
@@ -190,7 +201,7 @@ static NSString* kBackgroundFetchCapatibility = @"fetch";
 
 #pragma mark - Selectors handling
 
-- (void)addApplicationLifeCycleDelegate:(NSObject<FlutterPlugin>*)delegate {
+- (void)addApplicationLifeCycleDelegate:(NSObject<FlutterApplicationLifeCycleDelegate>*)delegate {
   [_lifeCycleDelegate addDelegate:delegate];
 }
 

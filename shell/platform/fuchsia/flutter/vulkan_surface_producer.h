@@ -49,7 +49,7 @@ class VulkanSurfaceProducer final
   }
 
   // |flutter::SceneUpdateContext::GetRetainedNode|
-  const scenic::EntityNode& GetRetainedNode(
+  scenic::EntityNode* GetRetainedNode(
       const flutter::LayerRasterCacheKey& key) override {
     return surface_pool_->GetRetainedNode(key);
   }
@@ -65,6 +65,8 @@ class VulkanSurfaceProducer final
             "VulkanSurfaceProducer:OnSessionSizeChangeHint %f, %f",
             width_change_factor, height_change_factor);
   }
+
+  GrDirectContext* gr_context() { return context_.get(); }
 
  private:
   // VulkanProvider
@@ -84,7 +86,7 @@ class VulkanSurfaceProducer final
   fml::RefPtr<vulkan::VulkanProcTable> vk_;
   std::unique_ptr<vulkan::VulkanApplication> application_;
   std::unique_ptr<vulkan::VulkanDevice> logical_device_;
-  sk_sp<GrContext> context_;
+  sk_sp<GrDirectContext> context_;
   std::unique_ptr<VulkanSurfacePool> surface_pool_;
   bool valid_ = false;
 

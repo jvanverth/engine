@@ -2,24 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @dart = 2.10
 part of ui;
 
 // ignore: unused_element, Used in Shader assert.
 bool _offsetIsValid(Offset offset) {
-  assert(offset != null, 'Offset argument was null.');
+  assert(offset != null,
+      'Offset argument was null.'); // ignore: unnecessary_null_comparison
   assert(!offset.dx.isNaN && !offset.dy.isNaN,
       'Offset argument contained a NaN value.');
   return true;
 }
 
 // ignore: unused_element, Used in Shader assert.
-bool _matrix4IsValid(Float64List matrix4) {
-  assert(matrix4 != null, 'Matrix4 argument was null.');
+bool _matrix4IsValid(Float32List matrix4) {
+  assert(matrix4 != null,
+      'Matrix4 argument was null.'); // ignore: unnecessary_null_comparison
   assert(matrix4.length == 16, 'Matrix4 must have 16 entries.');
   return true;
 }
 
-void _validateColorStops(List<Color> colors, List<double> colorStops) {
+void _validateColorStops(List<Color> colors, List<double>? colorStops) {
   if (colorStops == null) {
     if (colors.length != 2)
       throw ArgumentError(
@@ -32,7 +35,7 @@ void _validateColorStops(List<Color> colors, List<double> colorStops) {
 }
 
 Color _scaleAlpha(Color a, double factor) {
-  return a.withAlpha((a.alpha * factor).round().clamp(0, 255));
+  return a.withAlpha(_clampInt((a.alpha * factor).round(), 0, 255));
 }
 
 /// An immutable 32 bit color value in ARGB
@@ -130,7 +133,7 @@ class Color {
     if (component <= 0.03928) {
       return component / 12.92;
     }
-    return math.pow((component + 0.055) / 1.055, 2.4);
+    return math.pow((component + 0.055) / 1.055, 2.4) as double;
   }
 
   /// Returns a brightness value between 0 for darkest and 1 for lightest.
@@ -169,23 +172,26 @@ class Color {
   ///
   /// Values for `t` are usually obtained from an [Animation<double>], such as
   /// an [AnimationController].
-  static Color lerp(Color a, Color b, double t) {
-    assert(t != null);
-    if (a == null && b == null) {
-      return null;
-    }
-    if (a == null) {
-      return _scaleAlpha(b, t);
-    }
+  static Color? lerp(Color? a, Color? b, double t) {
+    assert(t != null); // ignore: unnecessary_null_comparison
     if (b == null) {
-      return _scaleAlpha(a, 1.0 - t);
+      if (a == null) {
+        return null;
+      } else {
+        return _scaleAlpha(a, 1.0 - t);
+      }
+    } else {
+      if (a == null) {
+        return _scaleAlpha(b, t);
+      } else {
+        return Color.fromARGB(
+          _clampInt(_lerpInt(a.alpha, b.alpha, t).toInt(), 0, 255),
+          _clampInt(_lerpInt(a.red, b.red, t).toInt(), 0, 255),
+          _clampInt(_lerpInt(a.green, b.green, t).toInt(), 0, 255),
+          _clampInt(_lerpInt(a.blue, b.blue, t).toInt(), 0, 255),
+        );
+      }
     }
-    return Color.fromARGB(
-      lerpDouble(a.alpha, b.alpha, t).toInt().clamp(0, 255),
-      lerpDouble(a.red, b.red, t).toInt().clamp(0, 255),
-      lerpDouble(a.green, b.green, t).toInt().clamp(0, 255),
-      lerpDouble(a.blue, b.blue, t).toInt().clamp(0, 255),
-    );
   }
 
   /// Combine the foreground color as a transparent color over top
@@ -226,51 +232,27 @@ class Color {
     }
   }
 
+  /// Returns an alpha value representative of the provided [opacity] value.
+  ///
+  /// The [opacity] value may not be null.
+  static int getAlphaFromOpacity(double opacity) {
+    assert(opacity != null); // ignore: unnecessary_null_comparison
+    return (opacity.clamp(0.0, 1.0) * 255).round();
+  }
+
   @override
-  bool operator ==(dynamic other) {
+  bool operator ==(Object other) {
     if (identical(this, other)) {
       return true;
     }
     if (other.runtimeType != runtimeType) {
       return false;
     }
-    final Color typedOther = other;
-    return value == typedOther.value;
+    return other is Color && other.value == value;
   }
 
   @override
   int get hashCode => value.hashCode;
-
-  /// Converts color to a css compatible attribute value.
-  // webOnly
-  String toCssString() {
-    if ((0xff000000 & value) == 0xff000000) {
-      return toCssStringRgbOnly();
-    } else {
-      final double alpha = ((value >> 24) & 0xFF) / 255.0;
-      final StringBuffer sb = StringBuffer();
-      sb.write('rgba(');
-      sb.write(((value >> 16) & 0xFF).toString());
-      sb.write(',');
-      sb.write(((value >> 8) & 0xFF).toString());
-      sb.write(',');
-      sb.write((value & 0xFF).toString());
-      sb.write(',');
-      sb.write(alpha.toString());
-      sb.write(')');
-      return sb.toString();
-    }
-  }
-
-  /// Returns the CSS value of this color without the alpha component.
-  ///
-  /// This is useful when painting shadows as on the Web shadow opacity combines
-  /// with the paint opacity.
-  // webOnly
-  String toCssStringRgbOnly() {
-    final String paddedValue = '00000${value.toRadixString(16)}';
-    return '#${paddedValue.substring(paddedValue.length - 6)}';
-  }
 
   @override
   String toString() {
@@ -683,7 +665,7 @@ enum BlendMode {
   /// ![](https://flutter.github.io/assets-for-api-docs/assets/dart-ui/blend_mode_colorDodge.png)
   colorDodge,
 
-  /// Divide the inverse of the destination by the the source, and inverse the result.
+  /// Divide the inverse of the destination by the source, and inverse the result.
   ///
   /// Inverting the components means that a fully saturated channel (opaque
   /// white) is treated as the value 0.0, and values normally treated as 0.0
@@ -914,44 +896,32 @@ enum Clip {
   antiAliasWithSaveLayer,
 }
 
-/// Private Paint context data used for recording canvas commands allowing
-/// Paint to be mutated post canvas draw operations.
-class PaintData {
-  BlendMode blendMode;
-  PaintingStyle style;
-  double strokeWidth;
-  StrokeCap strokeCap;
-  StrokeJoin strokeJoin;
-  bool isAntiAlias = true;
-  Color color;
-  Shader shader;
-  MaskFilter maskFilter;
-  FilterQuality filterQuality;
-  ColorFilter colorFilter;
-
-  // Internal for recording canvas use.
-  PaintData clone() {
-    return PaintData()
-      ..blendMode = blendMode
-      ..filterQuality = filterQuality
-      ..maskFilter = maskFilter
-      ..shader = shader
-      ..isAntiAlias = isAntiAlias
-      ..color = color
-      ..colorFilter = colorFilter
-      ..strokeWidth = strokeWidth
-      ..style = style
-      ..strokeJoin = strokeJoin
-      ..strokeCap = strokeCap;
-  }
-}
-
 /// A description of the style to use when drawing on a [Canvas].
 ///
 /// Most APIs on [Canvas] take a [Paint] object to describe the style
 /// to use for that operation.
-class Paint {
-  PaintData _paintData = PaintData();
+abstract class Paint {
+  /// Constructs an empty [Paint] object with all fields initialized to
+  /// their defaults.
+  factory Paint() =>
+      engine.experimentalUseSkia ? engine.CkPaint() : engine.SurfacePaint();
+
+  /// Whether to dither the output when drawing images.
+  ///
+  /// If false, the default value, dithering will be enabled when the input
+  /// color depth is higher than the output color depth. For example,
+  /// drawing an RGB8 image onto an RGB565 canvas.
+  ///
+  /// This value also controls dithering of [shader]s, which can make
+  /// gradients appear smoother.
+  ///
+  /// Whether or not dithering affects the output is implementation defined.
+  /// Some implementations may choose to ignore this completely, if they're
+  /// unable to control dithering.
+  ///
+  /// To ensure that dithering is consistently enabled for your entire
+  /// application, set this to true before invoking any drawing related code.
+  static bool enableDithering = false;
 
   /// A blend mode to apply when a shape is drawn or a layer is composited.
   ///
@@ -970,28 +940,14 @@ class Paint {
   ///  * [Canvas.saveLayer], which uses its [Paint]'s [blendMode] to composite
   ///    the layer when [restore] is called.
   ///  * [BlendMode], which discusses the user of [saveLayer] with [blendMode].
-  BlendMode get blendMode => _paintData.blendMode ?? BlendMode.srcOver;
-  set blendMode(BlendMode value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.blendMode = value;
-  }
-
-  BlendMode _blendMode;
+  BlendMode get blendMode;
+  set blendMode(BlendMode value);
 
   /// Whether to paint inside shapes, the edges of shapes, or both.
   ///
   /// If null, defaults to [PaintingStyle.fill].
-  PaintingStyle get style => _paintData.style ?? PaintingStyle.fill;
-  set style(PaintingStyle value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.style = value;
-  }
+  PaintingStyle get style;
+  set style(PaintingStyle value);
 
   /// How wide to make edges drawn when [style] is set to
   /// [PaintingStyle.stroke] or [PaintingStyle.strokeAndFill]. The
@@ -999,78 +955,43 @@ class Paint {
   /// orthogonal to the direction of the path.
   ///
   /// The values null and 0.0 correspond to a hairline width.
-  double get strokeWidth => _paintData.strokeWidth ?? 0.0;
-  set strokeWidth(double value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.strokeWidth = value;
-  }
+  double get strokeWidth;
+  set strokeWidth(double value);
 
   /// The kind of finish to place on the end of lines drawn when
   /// [style] is set to [PaintingStyle.stroke] or
   /// [PaintingStyle.strokeAndFill].
   ///
   /// If null, defaults to [StrokeCap.butt], i.e. no caps.
-  StrokeCap get strokeCap => _paintData.strokeCap;
-  set strokeCap(StrokeCap value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.strokeCap = value;
-  }
+  StrokeCap get strokeCap;
+  set strokeCap(StrokeCap value);
 
   /// The kind of finish to use for line segment joins.
   /// [style] is set to [PaintingStyle.stroke] or
   /// [PaintingStyle.strokeAndFill]. Only applies to drawPath not drawPoints.
   ///
   /// If null, defaults to [StrokeCap.butt], i.e. no caps.
-  StrokeJoin get strokeJoin => _paintData.strokeJoin;
-  set strokeJoin(StrokeJoin value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.strokeJoin = value;
-  }
+  StrokeJoin get strokeJoin;
+  set strokeJoin(StrokeJoin value);
 
   /// Whether to apply anti-aliasing to lines and images drawn on the
   /// canvas.
   ///
   /// Defaults to true. The value null is treated as false.
-  bool get isAntiAlias => _paintData.isAntiAlias;
-  set isAntiAlias(bool value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.isAntiAlias = value;
-  }
+  bool get isAntiAlias;
+  set isAntiAlias(bool value);
 
-  Color get color => _paintData.color;
-  set color(Color value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.color = value;
-  }
+  Color get color;
+  set color(Color value);
 
   /// Whether the colors of the image are inverted when drawn.
   ///
   /// Inverting the colors of an image applies a new color filter that will
   /// be composed with any user provided color filters. This is primarily
   /// used for implementing smart invert on iOS.
-  bool get invertColors {
-    return false;
-  }
+  bool get invertColors;
 
-  set invertColors(bool value) {}
-
-  Color _color = _defaultPaintColor;
-  static const Color _defaultPaintColor = Color(0xFF000000);
+  set invertColors(bool value);
 
   /// The shader to use when stroking or filling a shape.
   ///
@@ -1082,27 +1003,15 @@ class Paint {
   ///  * [ImageShader], a shader that tiles an [Image].
   ///  * [colorFilter], which overrides [shader].
   ///  * [color], which is used if [shader] and [colorFilter] are null.
-  Shader get shader => _paintData.shader;
-  set shader(Shader value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.shader = value;
-  }
+  Shader? get shader;
+  set shader(Shader? value);
 
   /// A mask filter (for example, a blur) to apply to a shape after it has been
   /// drawn but before it has been composited into the image.
   ///
   /// See [MaskFilter] for details.
-  MaskFilter get maskFilter => _paintData.maskFilter;
-  set maskFilter(MaskFilter value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.maskFilter = value;
-  }
+  MaskFilter? get maskFilter;
+  set maskFilter(MaskFilter? value);
 
   /// Controls the performance vs quality trade-off to use when applying
   /// filters, such as [maskFilter], or when drawing images, as with
@@ -1110,14 +1019,8 @@ class Paint {
   ///
   /// Defaults to [FilterQuality.none].
   // TODO(ianh): verify that the image drawing methods actually respect this
-  FilterQuality get filterQuality => _paintData.filterQuality;
-  set filterQuality(FilterQuality value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.filterQuality = value;
-  }
+  FilterQuality get filterQuality;
+  set filterQuality(FilterQuality value);
 
   /// A color filter to apply when a shape is drawn or when a layer is
   /// composited.
@@ -1125,23 +1028,11 @@ class Paint {
   /// See [ColorFilter] for details.
   ///
   /// When a shape is being drawn, [colorFilter] overrides [color] and [shader].
-  ColorFilter get colorFilter => _paintData.colorFilter;
-  set colorFilter(ColorFilter value) {
-    if (_frozen) {
-      _paintData = _paintData.clone();
-      _frozen = false;
-    }
-    _paintData.colorFilter = value;
-  }
+  ColorFilter? get colorFilter;
+  set colorFilter(ColorFilter? value);
 
-  // TODO(flutter_web): see https://github.com/flutter/flutter/issues/33605
-  double get strokeMiterLimit {
-    return null;
-  }
-
-  set strokeMiterLimit(double value) {
-    assert(value != null);
-  }
+  double get strokeMiterLimit;
+  set strokeMiterLimit(double value);
 
   /// The [ImageFilter] to use when drawing raster images.
   ///
@@ -1165,55 +1056,8 @@ class Paint {
   /// See also:
   ///
   ///  * [MaskFilter], which is used for drawing geometry.
-  ImageFilter get imageFilter {
-    // TODO(flutter/flutter#35156): Implement ImageFilter.
-    return null;
-  }
-
-  set imageFilter(ImageFilter value) {
-    // TODO(flutter/flutter#35156): Implement ImageFilter.
-  }
-
-  // True if Paint instance has used in RecordingCanvas.
-  bool _frozen = false;
-
-  // Marks this paint object as previously used.
-  PaintData get webOnlyPaintData {
-    // Flip bit so next time object gets mutated we create a clone of
-    // current paint data.
-    _frozen = true;
-    return _paintData;
-  }
-
-  @override
-  String toString() {
-    final StringBuffer result = StringBuffer();
-    String semicolon = '';
-    result.write('Paint(');
-    if (style == PaintingStyle.stroke) {
-      result.write('$style');
-      if (strokeWidth != null && strokeWidth != 0.0)
-        result.write(' $strokeWidth');
-      else
-        result.write(' hairline');
-      if (strokeCap != null && strokeCap != StrokeCap.butt)
-        result.write(' $strokeCap');
-      semicolon = '; ';
-    }
-    if (isAntiAlias != true) {
-      result.write('${semicolon}antialias off');
-      semicolon = '; ';
-    }
-    if (color != _defaultPaintColor) {
-      if (color != null)
-        result.write('$semicolon$color');
-      else
-        result.write('${semicolon}no color');
-      semicolon = '; ';
-    }
-    result.write(')');
-    return result.toString();
-  }
+  ImageFilter? get imageFilter;
+  set imageFilter(ImageFilter? value);
 }
 
 /// Base class for objects such as [Gradient] and [ImageShader] which
@@ -1229,8 +1073,6 @@ abstract class Shader {
 /// There are several types of gradients, represented by the various
 /// constructors on this class.
 abstract class Gradient extends Shader {
-  Gradient._() : super._();
-
   /// Creates a linear gradient from `from` to `to`.
   ///
   /// If `colorStops` is provided, `colorStops[i]` is a number from 0.0 to 1.0
@@ -1252,12 +1094,12 @@ abstract class Gradient extends Shader {
     Offset from,
     Offset to,
     List<Color> colors, [
-    List<double> colorStops,
+    List<double>? colorStops,
     TileMode tileMode = TileMode.clamp,
-    Float64List
-        matrix4, // TODO(flutter_web): see https://github.com/flutter/flutter/issues/32819
-  ]) =>
-      engine.GradientLinear(from, to, colors, colorStops, tileMode);
+    Float64List? matrix4,
+  ]) => engine.experimentalUseSkia
+    ? engine.CkGradientLinear(from, to, colors, colorStops, tileMode, matrix4)
+    : engine.GradientLinear(from, to, colors, colorStops, tileMode, matrix4);
 
   /// Creates a radial gradient centered at `center` that ends at `radius`
   /// distance from the center.
@@ -1288,24 +1130,35 @@ abstract class Gradient extends Shader {
   /// circle and `focalRadius` being the radius of that circle. If `focal` is
   /// provided and not equal to `center`, at least one of the two offsets must
   /// not be equal to [Offset.zero].
-  factory Gradient.radial(Offset center, double radius, List<Color> colors,
-      [List<double> colorStops,
-      TileMode tileMode = TileMode.clamp,
-      Float64List matrix4,
-      Offset focal,
-      double focalRadius = 0.0]) {
-    focalRadius ??= 0.0;
+  factory Gradient.radial(
+    Offset center,
+    double radius,
+    List<Color> colors, [
+    List<double>? colorStops,
+    TileMode tileMode = TileMode.clamp,
+    Float64List? matrix4,
+    Offset? focal,
+    double focalRadius = 0.0,
+  ]) {
     _validateColorStops(colors, colorStops);
     // If focal is null or focal radius is null, this should be treated as a regular radial gradient
     // If focal == center and the focal radius is 0.0, it's still a regular radial gradient
+    final Float32List? matrix32 =
+        matrix4 != null ? engine.toMatrix32(matrix4) : null;
     if (focal == null || (focal == center && focalRadius == 0.0)) {
-      return engine.GradientRadial(
-          center, radius, colors, colorStops, tileMode, matrix4);
+      return engine.experimentalUseSkia
+        ? engine.CkGradientRadial(
+          center, radius, colors, colorStops, tileMode, matrix32)
+        : engine.GradientRadial(
+          center, radius, colors, colorStops, tileMode, matrix32);
     } else {
       assert(center != Offset.zero ||
           focal != Offset.zero); // will result in exception(s) in Skia side
-      return engine.GradientConical(focal, focalRadius, center, radius, colors,
-          colorStops, tileMode, matrix4);
+      return engine.experimentalUseSkia
+        ? engine.CkGradientConical(focal, focalRadius, center, radius, colors,
+          colorStops, tileMode, matrix32)
+        : engine.GradientConical(focal, focalRadius, center, radius, colors,
+          colorStops, tileMode, matrix32);
     }
   }
 
@@ -1338,14 +1191,16 @@ abstract class Gradient extends Shader {
   factory Gradient.sweep(
     Offset center,
     List<Color> colors, [
-    List<double> colorStops,
+    List<double>? colorStops,
     TileMode tileMode = TileMode.clamp,
     double startAngle = 0.0,
     double endAngle = math.pi * 2,
-    Float64List matrix4,
-  ]) =>
-      engine.GradientSweep(
-          center, colors, colorStops, tileMode, startAngle, endAngle, matrix4);
+    Float64List? matrix4,
+  ]) => engine.experimentalUseSkia
+    ? engine.CkGradientSweep(center, colors, colorStops, tileMode, startAngle,
+          endAngle, matrix4 != null ? engine.toMatrix32(matrix4) : null)
+    : engine.GradientSweep(center, colors, colorStops, tileMode, startAngle,
+          endAngle, matrix4 != null ? engine.toMatrix32(matrix4) : null);
 }
 
 /// Opaque handle to raw decoded image data (pixels).
@@ -1368,7 +1223,7 @@ abstract class Image {
   ///
   /// Returns a future that completes with the binary image data or an error
   /// if encoding fails.
-  Future<ByteData> toByteData(
+  Future<ByteData?> toByteData(
       {ImageByteFormat format = ImageByteFormat.rawRgba});
 
   /// Release the resources used by this object. The object is no longer usable
@@ -1472,15 +1327,6 @@ abstract class ColorFilter {
   List<dynamic> webOnlySerializeToCssPaint() {
     throw UnsupportedError('ColorFilter for CSS paint not yet supported');
   }
-
-  @override
-  bool operator ==(dynamic other);
-
-  @override
-  int get hashCode;
-
-  @override
-  String toString();
 }
 
 /// Styles to use for blurs in [MaskFilter] objects.
@@ -1534,8 +1380,8 @@ class MaskFilter {
   const MaskFilter.blur(
     this._style,
     this._sigma,
-  )   : assert(_style != null),
-        assert(_sigma != null);
+  )   : assert(_style != null), // ignore: unnecessary_null_comparison
+        assert(_sigma != null); // ignore: unnecessary_null_comparison
 
   final BlurStyle _style;
   final double _sigma;
@@ -1547,19 +1393,17 @@ class MaskFilter {
   BlurStyle get webOnlyBlurStyle => _style;
 
   @override
-  bool operator ==(dynamic other) {
-    if (other is! MaskFilter) {
-      return false;
-    }
-    final MaskFilter typedOther = other;
-    return _style == typedOther._style && _sigma == typedOther._sigma;
+  bool operator ==(Object other) {
+    return other is MaskFilter &&
+        other._style == _style &&
+        other._sigma == _sigma;
   }
 
   @override
   int get hashCode => hashValues(_style, _sigma);
 
   List<dynamic> webOnlySerializeToCssPaint() {
-    return <dynamic>[_style?.index, _sigma];
+    return <dynamic>[_style.index, _sigma];
   }
 
   @override
@@ -1604,24 +1448,21 @@ enum FilterQuality {
 ///    this class.
 class ImageFilter {
   /// Creates an image filter that applies a Gaussian blur.
-  ImageFilter.blur({this.sigmaX = 0.0, this.sigmaY = 0.0})
-      : matrix4 = null,
-        filterQuality = FilterQuality.low;
+  factory ImageFilter.blur({double sigmaX = 0.0, double sigmaY = 0.0}) {
+    if (engine.experimentalUseSkia) {
+      return engine.CkImageFilter.blur(sigmaX: sigmaX, sigmaY: sigmaY);
+    }
+    return engine.EngineImageFilter.blur(sigmaX: sigmaX, sigmaY: sigmaY);
+  }
 
-  ImageFilter.matrix(this.matrix4, {this.filterQuality = FilterQuality.low})
-      : sigmaX = 0.0,
-        sigmaY = 0.0 {
+  ImageFilter.matrix(Float64List matrix4,
+      {FilterQuality filterQuality = FilterQuality.low}) {
     // TODO(flutter_web): add implementation.
     throw UnimplementedError(
         'ImageFilter.matrix not implemented for web platform.');
     //    if (matrix4.length != 16)
     //      throw ArgumentError('"matrix4" must have 16 entries.');
   }
-
-  final Float64List matrix4;
-  final FilterQuality filterQuality;
-  final double sigmaX;
-  final double sigmaY;
 }
 
 /// The format in which image bytes should be returned when using
@@ -1669,16 +1510,6 @@ enum PixelFormat {
   bgra8888,
 }
 
-class _ImageInfo {
-  _ImageInfo(this.width, this.height, this.format, this.rowBytes) {
-    rowBytes ??= width * 4;
-  }
-  int width;
-  int height;
-  int format;
-  int rowBytes;
-}
-
 /// Callback signature for [decodeImageFromList].
 typedef ImageDecoderCallback = void Function(Image result);
 
@@ -1699,7 +1530,7 @@ abstract class FrameInfo {
   int get _durationMillis => 0;
 
   /// The [Image] object for this frame.
-  Image get image => null;
+  Image get image;
 }
 
 /// A handle to an image codec.
@@ -1726,11 +1557,11 @@ class Codec {
   ///
   /// The returned future can complete with an error if the decoding has failed.
   Future<FrameInfo> getNextFrame() {
-    return engine.futurize(_getNextFrame);
+    return engine.futurize<FrameInfo>(_getNextFrame);
   }
 
   /// Returns an error message on failure, null on success.
-  String _getNextFrame(engine.Callback<FrameInfo> callback) => null;
+  String? _getNextFrame(engine.Callback<FrameInfo> callback) => null;
 
   /// Release the resources used by this object. The object is no longer usable
   /// after this method is called.
@@ -1748,25 +1579,34 @@ class Codec {
 /// failed.
 Future<Codec> instantiateImageCodec(
   Uint8List list, {
-  int targetWidth,
-  int targetHeight,
+  int? targetWidth,
+  int? targetHeight,
+  bool allowUpscaling = true,
 }) {
-  return engine.futurize((engine.Callback<Codec> callback) =>
+  return _futurize<Codec>((engine.Callback<Codec> callback) =>
       // TODO: Implement targetWidth and targetHeight support.
-      _instantiateImageCodec(list, callback, null));
+      _instantiateImageCodec(list, callback));
 }
 
 /// Instantiates a [Codec] object for an image binary data.
 ///
 /// Returns an error message if the instantiation has failed, null otherwise.
-String _instantiateImageCodec(
-    Uint8List list, engine.Callback<Codec> callback, _ImageInfo imageInfo) {
+String? _instantiateImageCodec(
+  Uint8List list,
+  engine.Callback<Codec> callback, {
+  int? width,
+  int? height,
+  int? rowBytes,
+  PixelFormat? format,
+}) {
   if (engine.experimentalUseSkia) {
-    if (imageInfo == null) {
+    if (width == null) {
       engine.skiaInstantiateImageCodec(list, callback);
     } else {
-      engine.skiaInstantiateImageCodec(list, callback, imageInfo.width,
-          imageInfo.height, imageInfo.format, imageInfo.rowBytes);
+      assert(height != null);
+      assert(format != null);
+      engine.skiaInstantiateImageCodec(
+          list, callback, width, height, format!.index, rowBytes);
     }
     return null;
   }
@@ -1775,14 +1615,24 @@ String _instantiateImageCodec(
   return null;
 }
 
-Future<Codec> webOnlyInstantiateImageCodecFromUrl(Uri uri) {
-  return engine.futurize((engine.Callback<Codec> callback) =>
-      _instantiateImageCodecFromUrl(uri, callback));
+Future<Codec?> webOnlyInstantiateImageCodecFromUrl(Uri uri,
+    {engine.WebOnlyImageCodecChunkCallback? chunkCallback}) {
+  return _futurize<Codec?>((engine.Callback<Codec> callback) =>
+      _instantiateImageCodecFromUrl(uri, chunkCallback, callback));
 }
 
-String _instantiateImageCodecFromUrl(Uri uri, engine.Callback<Codec> callback) {
-  callback(engine.HtmlCodec(uri.toString()));
-  return null;
+String? _instantiateImageCodecFromUrl(
+    Uri uri,
+    engine.WebOnlyImageCodecChunkCallback? chunkCallback,
+    engine.Callback<Codec> callback) {
+  if (engine.experimentalUseSkia) {
+    engine.skiaInstantiateWebImageCodec(
+        uri.toString(), callback, chunkCallback);
+    return null;
+  } else {
+    callback(engine.HtmlCodec(uri.toString(), chunkCallback: chunkCallback));
+    return null;
+  }
 }
 
 /// Loads a single image frame from a byte array into an [Image] object.
@@ -1807,14 +1657,28 @@ Future<void> _decodeImageFromListAsync(
 /// [rowBytes] is the number of bytes consumed by each row of pixels in the
 /// data buffer.  If unspecified, it defaults to [width] multipled by the
 /// number of bytes per pixel in the provided [format].
-void decodeImageFromPixels(Uint8List pixels, int width, int height,
-    PixelFormat format, ImageDecoderCallback callback,
-    {int rowBytes}) {
-  final _ImageInfo imageInfo =
-      _ImageInfo(width, height, format.index, rowBytes);
-  final Future<Codec> codecFuture = engine.futurize(
-      (engine.Callback<Codec> callback) =>
-          _instantiateImageCodec(pixels, callback, imageInfo));
+void decodeImageFromPixels(
+  Uint8List pixels,
+  int width,
+  int height,
+  PixelFormat format,
+  ImageDecoderCallback callback, {
+  int? rowBytes,
+  int? targetWidth,
+  int? targetHeight,
+  bool allowUpscaling = true,
+}) {
+  final Future<Codec> codecFuture =
+      _futurize((engine.Callback<Codec> callback) {
+    return _instantiateImageCodec(
+      pixels,
+      callback,
+      width: width,
+      height: height,
+      format: format,
+      rowBytes: rowBytes,
+    );
+  });
   codecFuture
       .then((Codec codec) => codec.getNextFrame())
       .then((FrameInfo frameInfo) => callback(frameInfo.image));
@@ -1838,8 +1702,10 @@ class Shadow {
     this.color = const Color(_kColorDefault),
     this.offset = Offset.zero,
     this.blurRadius = 0.0,
-  })  : assert(color != null, 'Text shadow color was null.'),
-        assert(offset != null, 'Text shadow offset was null.'),
+  })  : assert(color != null,
+            'Text shadow color was null.'), // ignore: unnecessary_null_comparison
+        assert(offset != null,
+            'Text shadow offset was null.'), // ignore: unnecessary_null_comparison
         assert(blurRadius >= 0.0,
             'Text shadow blur radius should be non-negative.');
 
@@ -1920,22 +1786,25 @@ class Shadow {
   /// Values for `t` are usually obtained from an [Animation<double>], such as
   /// an [AnimationController].
   /// {@endtemplate}
-  static Shadow lerp(Shadow a, Shadow b, double t) {
-    assert(t != null);
-    if (a == null && b == null) {
-      return null;
-    }
-    if (a == null) {
-      return b.scale(t);
-    }
+  static Shadow? lerp(Shadow? a, Shadow? b, double t) {
+    assert(t != null); // ignore: unnecessary_null_comparison
     if (b == null) {
-      return a.scale(1.0 - t);
+      if (a == null) {
+        return null;
+      } else {
+        return a.scale(1.0 - t);
+      }
+    } else {
+      if (a == null) {
+        return b.scale(t);
+      } else {
+        return Shadow(
+          color: Color.lerp(a.color, b.color, t)!,
+          offset: Offset.lerp(a.offset, b.offset, t)!,
+          blurRadius: _lerpDouble(a.blurRadius, b.blurRadius, t),
+        );
+      }
     }
-    return Shadow(
-      color: Color.lerp(a.color, b.color, t),
-      offset: Offset.lerp(a.offset, b.offset, t),
-      blurRadius: lerpDouble(a.blurRadius, b.blurRadius, t),
-    );
   }
 
   /// Linearly interpolate between two lists of shadows.
@@ -1943,8 +1812,8 @@ class Shadow {
   /// If the lists differ in length, excess items are lerped with null.
   ///
   /// {@macro dart.ui.shadow.lerp}
-  static List<Shadow> lerpList(List<Shadow> a, List<Shadow> b, double t) {
-    assert(t != null);
+  static List<Shadow>? lerpList(List<Shadow>? a, List<Shadow>? b, double t) {
+    assert(t != null); // ignore: unnecessary_null_comparison
     if (a == null && b == null) {
       return null;
     }
@@ -1953,7 +1822,7 @@ class Shadow {
     final List<Shadow> result = <Shadow>[];
     final int commonLength = math.min(a.length, b.length);
     for (int i = 0; i < commonLength; i += 1)
-      result.add(Shadow.lerp(a[i], b[i], t));
+      result.add(Shadow.lerp(a[i], b[i], t)!);
     for (int i = commonLength; i < a.length; i += 1)
       result.add(a[i].scale(1.0 - t));
     for (int i = commonLength; i < b.length; i += 1) {
@@ -1963,17 +1832,14 @@ class Shadow {
   }
 
   @override
-  bool operator ==(dynamic other) {
+  bool operator ==(Object other) {
     if (identical(this, other)) {
       return true;
     }
-    if (other is! Shadow) {
-      return false;
-    }
-    final Shadow typedOther = other;
-    return color == typedOther.color &&
-        offset == typedOther.offset &&
-        blurRadius == typedOther.blurRadius;
+    return other is Shadow &&
+        other.color == color &&
+        other.offset == offset &&
+        other.blurRadius == blurRadius;
   }
 
   @override
@@ -1981,4 +1847,134 @@ class Shadow {
 
   @override
   String toString() => 'TextShadow($color, $offset, $blurRadius)';
+}
+
+/// A shader (as used by [Paint.shader]) that tiles an image.
+class ImageShader extends Shader {
+  /// Creates an image-tiling shader. The first argument specifies the image to
+  /// tile. The second and third arguments specify the [TileMode] for the x
+  /// direction and y direction respectively. The fourth argument gives the
+  /// matrix to apply to the effect. All the arguments are required and must not
+  /// be null.
+  factory ImageShader(
+      Image image, TileMode tmx, TileMode tmy, Float64List matrix4) {
+    if (engine.experimentalUseSkia) {
+      return engine.CkImageShader(image, tmx, tmy, matrix4);
+    }
+    throw UnsupportedError('ImageShader not implemented for web platform.');
+  }
+}
+
+/// A handle to a read-only byte buffer that is managed by the engine.
+class ImmutableBuffer {
+  ImmutableBuffer._(this.length);
+
+  /// Creates a copy of the data from a [Uint8List] suitable for internal use
+  /// in the engine.
+  static Future<ImmutableBuffer> fromUint8List(Uint8List list) async {
+    final ImmutableBuffer instance = ImmutableBuffer._(list.length);
+    instance._list = list;
+    return instance;
+  }
+
+  Uint8List? _list;
+
+  /// The length, in bytes, of the underlying data.
+  final int length;
+
+  /// Release the resources used by this object. The object is no longer usable
+  /// after this method is called.
+  void dispose() => _list = null;
+}
+
+/// A descriptor of data that can be turned into an [Image] via a [Codec].
+///
+/// Use this class to determine the height, width, and byte size of image data
+/// before decoding it.
+class ImageDescriptor {
+  ImageDescriptor._()
+      : _width = null,
+        _height = null,
+        _rowBytes = null,
+        _format = null;
+
+  /// Creates an image descriptor from encoded data in a supported format.
+  static Future<ImageDescriptor> encoded(ImmutableBuffer buffer) async {
+    final ImageDescriptor descriptor = ImageDescriptor._();
+    descriptor._data = buffer._list;
+    return descriptor;
+  }
+
+  /// Creates an image descriptor from raw image pixels.
+  ///
+  /// The `pixels` parameter is the pixel data in the encoding described by
+  /// `format`.
+  ///
+  /// The `rowBytes` parameter is the number of bytes consumed by each row of
+  /// pixels in the data buffer. If unspecified, it defaults to `width` multiplied
+  /// by the number of bytes per pixel in the provided `format`.
+  // Not async because there's no expensive work to do here.
+  ImageDescriptor.raw(
+    ImmutableBuffer buffer, {
+    required int width,
+    required int height,
+    int? rowBytes,
+    required PixelFormat pixelFormat,
+  })   : _width = width,
+        _height = height,
+        _rowBytes = rowBytes,
+        _format = pixelFormat {
+    _data = buffer._list;
+  }
+
+  Uint8List? _data;
+  final int? _width;
+  final int? _height;
+  final int? _rowBytes;
+  final PixelFormat? _format;
+
+  Never _throw(String parameter) {
+    throw UnsupportedError(
+        'ImageDescriptor.$parameter is not supported on web.');
+  }
+
+  /// The width, in pixels, of the image.
+  int get width => _width ?? _throw('width');
+
+  /// The height, in pixels, of the image.
+  int get height => _height ?? _throw('height');
+
+  /// The number of bytes per pixel in the image.
+  int get bytesPerPixel => throw UnsupportedError(
+      'ImageDescriptor.bytesPerPixel is not supported on web.');
+
+  /// Release the resources used by this object. The object is no longer usable
+  /// after this method is called.
+  void dispose() => _data = null;
+
+  /// Creates a [Codec] object which is suitable for decoding the data in the
+  /// buffer to an [Image].
+  Future<Codec> instantiateCodec({int? targetWidth, int? targetHeight}) {
+    if (_data == null) {
+      throw StateError('Object is disposed');
+    }
+    if (_width == null) {
+      return instantiateImageCodec(
+        _data!,
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+        allowUpscaling: false,
+      );
+    }
+    return _futurize((engine.Callback<Codec> callback) {
+      return _instantiateImageCodec(
+        _data!,
+        callback,
+        width: _width,
+        height: _height,
+        format: _format,
+        rowBytes: _rowBytes,
+      );
+    });
+  }
 }

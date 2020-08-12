@@ -48,7 +48,7 @@ class VulkanSurface final
     : public flutter::SceneUpdateContext::SurfaceProducerSurface {
  public:
   VulkanSurface(vulkan::VulkanProvider& vulkan_provider,
-                sk_sp<GrContext> context,
+                sk_sp<GrDirectContext> context,
                 scenic::Session* session,
                 const SkISize& size);
 
@@ -69,7 +69,7 @@ class VulkanSurface final
   // Note: It is safe for the caller to collect the surface in the
   // |on_writes_committed| callback.
   void SignalWritesFinished(
-      std::function<void(void)> on_writes_committed) override;
+      const std::function<void(void)>& on_writes_committed) override;
 
   // |flutter::SceneUpdateContext::SurfaceProducerSurface|
   scenic::Image* GetImage() override;
@@ -117,7 +117,7 @@ class VulkanSurface final
   // than or equal the amount of memory contained in |vk_memory_|. Returns
   // whether the swap was successful.  The |VulkanSurface| will become invalid
   // if the swap was not successful.
-  bool BindToImage(sk_sp<GrContext> context, VulkanImage vulkan_image);
+  bool BindToImage(sk_sp<GrDirectContext> context, VulkanImage vulkan_image);
 
   // Flutter may retain a |VulkanSurface| for a |flutter::Layer| subtree to
   // improve the performance. The |retained_key_| identifies which layer subtree
@@ -133,10 +133,11 @@ class VulkanSurface final
   // For better safety in retained rendering, Flutter uses a retained
   // |EntityNode| associated with the retained surface instead of using the
   // retained surface directly. Hence Flutter can't modify the surface during
-  // retained rendering.
-  const scenic::EntityNode& GetRetainedNode() {
+  // retained rendering. However, the node itself is modifiable to be able
+  // to adjust its position.
+  scenic::EntityNode* GetRetainedNode() {
     used_in_retained_rendering_ = true;
-    return *retained_node_;
+    return retained_node_.get();
   }
 
   // Check whether the retained surface (and its associated |EntityNode|) is
@@ -161,11 +162,11 @@ class VulkanSurface final
                      zx_status_t status,
                      const zx_packet_signal_t* signal);
 
-  bool AllocateDeviceMemory(sk_sp<GrContext> context,
+  bool AllocateDeviceMemory(sk_sp<GrDirectContext> context,
                             const SkISize& size,
                             zx::vmo& exported_vmo);
 
-  bool SetupSkiaSurface(sk_sp<GrContext> context,
+  bool SetupSkiaSurface(sk_sp<GrDirectContext> context,
                         const SkISize& size,
                         SkColorType color_type,
                         const VkImageCreateInfo& image_create_info,
@@ -201,7 +202,7 @@ class VulkanSurface final
   size_t age_ = 0;
   bool valid_ = false;
 
-  flutter::LayerRasterCacheKey retained_key_ = {0, SkMatrix::MakeScale(1, 1)};
+  flutter::LayerRasterCacheKey retained_key_ = {0, SkMatrix::Scale(1, 1)};
   std::unique_ptr<scenic::EntityNode> retained_node_ = nullptr;
 
   std::atomic<bool> used_in_retained_rendering_ = {false};

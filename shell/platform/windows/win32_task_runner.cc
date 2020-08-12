@@ -5,12 +5,13 @@
 #include "flutter/shell/platform/windows/win32_task_runner.h"
 
 #include <atomic>
+#include <iostream>
 #include <utility>
 
 namespace flutter {
 
 Win32TaskRunner::Win32TaskRunner(DWORD main_thread_id,
-                                 TaskExpiredCallback on_task_expired)
+                                 const TaskExpiredCallback& on_task_expired)
     : main_thread_id_(main_thread_id),
       on_task_expired_(std::move(on_task_expired)) {}
 
@@ -93,7 +94,7 @@ void Win32TaskRunner::PostTask(FlutterTask flutter_task,
   }
 
   if (!PostThreadMessage(main_thread_id_, WM_NULL, 0, 0)) {
-    OutputDebugString(L"Failed to post message to main thread.");
+    std::cerr << "Failed to post message to main thread." << std::endl;
   }
 }
 

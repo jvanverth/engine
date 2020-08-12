@@ -12,10 +12,10 @@
 #include "flutter/flow/instrumentation.h"
 #include "flutter/flow/raster_cache.h"
 #include "flutter/flow/texture.h"
-#include "flutter/fml/gpu_thread_merger.h"
 #include "flutter/fml/macros.h"
+#include "flutter/fml/raster_thread_merger.h"
 #include "third_party/skia/include/core/SkCanvas.h"
-#include "third_party/skia/include/core/SkPictureRecorder.h"
+#include "third_party/skia/include/gpu/GrDirectContext.h"
 
 namespace flutter {
 
@@ -40,12 +40,13 @@ class CompositorContext {
   class ScopedFrame {
    public:
     ScopedFrame(CompositorContext& context,
-                GrContext* gr_context,
+                GrDirectContext* gr_context,
                 SkCanvas* canvas,
                 ExternalViewEmbedder* view_embedder,
                 const SkMatrix& root_surface_transformation,
                 bool instrumentation_enabled,
-                fml::RefPtr<fml::GpuThreadMerger> gpu_thread_merger);
+                bool surface_supports_readback,
+                fml::RefPtr<fml::RasterThreadMerger> raster_thread_merger);
 
     virtual ~ScopedFrame();
 
@@ -59,19 +60,22 @@ class CompositorContext {
       return root_surface_transformation_;
     }
 
-    GrContext* gr_context() const { return gr_context_; }
+    bool surface_supports_readback() { return surface_supports_readback_; }
+
+    GrDirectContext* gr_context() const { return gr_context_; }
 
     virtual RasterStatus Raster(LayerTree& layer_tree,
                                 bool ignore_raster_cache);
 
    private:
     CompositorContext& context_;
-    GrContext* gr_context_;
+    GrDirectContext* gr_context_;
     SkCanvas* canvas_;
     ExternalViewEmbedder* view_embedder_;
     const SkMatrix& root_surface_transformation_;
     const bool instrumentation_enabled_;
-    fml::RefPtr<fml::GpuThreadMerger> gpu_thread_merger_;
+    const bool surface_supports_readback_;
+    fml::RefPtr<fml::RasterThreadMerger> raster_thread_merger_;
 
     FML_DISALLOW_COPY_AND_ASSIGN(ScopedFrame);
   };
@@ -81,12 +85,13 @@ class CompositorContext {
   virtual ~CompositorContext();
 
   virtual std::unique_ptr<ScopedFrame> AcquireFrame(
-      GrContext* gr_context,
+      GrDirectContext* gr_context,
       SkCanvas* canvas,
       ExternalViewEmbedder* view_embedder,
       const SkMatrix& root_surface_transformation,
       bool instrumentation_enabled,
-      fml::RefPtr<fml::GpuThreadMerger> gpu_thread_merger);
+      bool surface_supports_readback,
+      fml::RefPtr<fml::RasterThreadMerger> raster_thread_merger);
 
   void OnGrContextCreated();
 

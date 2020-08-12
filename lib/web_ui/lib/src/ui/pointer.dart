@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// @dart = 2.10
 part of ui;
 
 /// How the pointer has changed since the last report.
@@ -70,15 +71,20 @@ enum PointerSignalKind {
 class PointerData {
   /// Creates an object that represents the state of a pointer.
   const PointerData({
+    this.embedderId = 0,
     this.timeStamp = Duration.zero,
     this.change = PointerChange.cancel,
     this.kind = PointerDeviceKind.touch,
     this.signalKind,
     this.device = 0,
+    this.pointerIdentifier = 0,
     this.physicalX = 0.0,
     this.physicalY = 0.0,
+    this.physicalDeltaX = 0.0,
+    this.physicalDeltaY = 0.0,
     this.buttons = 0,
     this.obscured = false,
+    this.synthesized = false,
     this.pressure = 0.0,
     this.pressureMin = 0.0,
     this.pressureMax = 0.0,
@@ -96,6 +102,13 @@ class PointerData {
     this.scrollDeltaY = 0.0,
   });
 
+  /// Unique identifier that ties the [PointerEvent] to embedder event created it.
+  ///
+  /// No two pointer events can have the same [embedderId]. This is different from
+  /// [pointerIdentifier] - used for hit-testing, whereas [embedderId] is used to
+  /// identify the platform event.
+  final int embedderId;
+
   /// Time of event dispatch, relative to an arbitrary timeline.
   final Duration timeStamp;
 
@@ -106,10 +119,16 @@ class PointerData {
   final PointerDeviceKind kind;
 
   /// The kind of signal for a pointer signal event.
-  final PointerSignalKind signalKind;
+  final PointerSignalKind? signalKind;
 
   /// Unique identifier for the pointing device, reused across interactions.
   final int device;
+
+  /// Unique identifier for the pointer.
+  ///
+  /// This field changes for each new pointer down event. Framework uses this
+  /// identifier to determine hit test result.
+  final int pointerIdentifier;
 
   /// X coordinate of the position of the pointer, in physical pixels in the
   /// global coordinate space.
@@ -118,6 +137,12 @@ class PointerData {
   /// Y coordinate of the position of the pointer, in physical pixels in the
   /// global coordinate space.
   final double physicalY;
+
+  /// The distance of pointer movement on X coordinate in physical pixels.
+  final double physicalDeltaX;
+
+  /// The distance of pointer movement on Y coordinate in physical pixels.
+  final double physicalDeltaY;
 
   /// Bit field using the *Button constants (primaryMouseButton,
   /// secondaryStylusButton, etc). For example, if this has the value 6 and the
@@ -129,6 +154,14 @@ class PointerData {
   /// obscuring this application's window. (Aspirational; not currently
   /// implemented.)
   final bool obscured;
+
+  /// Set if this pointer data was synthesized by pointer data packet converter.
+  /// pointer data packet converter will synthesize additional pointer datas if
+  /// the input sequence of pointer data is illegal.
+  ///
+  /// For example, a down pointer data will be synthesized if the converter receives
+  /// a move pointer data while the pointer is not previously down.
+  final bool synthesized;
 
   /// The pressure of the touch as a number ranging from 0.0, indicating a touch
   /// with no discernible pressure, to 1.0, indicating a touch with "normal"
@@ -232,42 +265,47 @@ class PointerData {
   final double scrollDeltaY;
 
   @override
-  String toString() => '$runtimeType(x: $physicalX, y: $physicalY)';
+  String toString() => 'PointerData(x: $physicalX, y: $physicalY)';
 
   /// Returns a complete textual description of the information in this object.
   String toStringFull() {
     return '$runtimeType('
-        'timeStamp: $timeStamp, '
-        'change: $change, '
-        'kind: $kind, '
-        'signalKind: $signalKind, '
-        'device: $device, '
-        'physicalX: $physicalX, '
-        'physicalY: $physicalY, '
-        'buttons: $buttons, '
-        'pressure: $pressure, '
-        'pressureMin: $pressureMin, '
-        'pressureMax: $pressureMax, '
-        'distance: $distance, '
-        'distanceMax: $distanceMax, '
-        'size: $size, '
-        'radiusMajor: $radiusMajor, '
-        'radiusMinor: $radiusMinor, '
-        'radiusMin: $radiusMin, '
-        'radiusMax: $radiusMax, '
-        'orientation: $orientation, '
-        'tilt: $tilt, '
-        'platformData: $platformData, '
-        'scrollDeltaX: $scrollDeltaX, '
-        'scrollDeltaY: $scrollDeltaY'
-        ')';
+             'embedderId: $embedderId, '
+             'timeStamp: $timeStamp, '
+             'change: $change, '
+             'kind: $kind, '
+             'signalKind: $signalKind, '
+             'device: $device, '
+             'pointerIdentifier: $pointerIdentifier, '
+             'physicalX: $physicalX, '
+             'physicalY: $physicalY, '
+             'physicalDeltaX: $physicalDeltaX, '
+             'physicalDeltaY: $physicalDeltaY, '
+             'buttons: $buttons, '
+             'synthesized: $synthesized, '
+             'pressure: $pressure, '
+             'pressureMin: $pressureMin, '
+             'pressureMax: $pressureMax, '
+             'distance: $distance, '
+             'distanceMax: $distanceMax, '
+             'size: $size, '
+             'radiusMajor: $radiusMajor, '
+             'radiusMinor: $radiusMinor, '
+             'radiusMin: $radiusMin, '
+             'radiusMax: $radiusMax, '
+             'orientation: $orientation, '
+             'tilt: $tilt, '
+             'platformData: $platformData, '
+             'scrollDeltaX: $scrollDeltaX, '
+             'scrollDeltaY: $scrollDeltaY'
+           ')';
   }
 }
 
 /// A sequence of reports about the state of pointers.
 class PointerDataPacket {
   /// Creates a packet of pointer data reports.
-  const PointerDataPacket({this.data = const <PointerData>[]});
+  const PointerDataPacket({ this.data = const <PointerData>[] }) : assert(data != null); // ignore: unnecessary_null_comparison
 
   /// Data about the individual pointers in this packet.
   ///
