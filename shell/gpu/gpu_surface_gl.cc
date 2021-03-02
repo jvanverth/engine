@@ -1,15 +1,14 @@
 // Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-// FLUTTER_NOLINT
 
-#include "gpu_surface_gl.h"
+#include "flutter/shell/gpu/gpu_surface_gl.h"
 
+#include "flutter/common/graphics/persistent_cache.h"
 #include "flutter/fml/base32.h"
 #include "flutter/fml/logging.h"
 #include "flutter/fml/size.h"
 #include "flutter/fml/trace_event.h"
-#include "flutter/shell/common/persistent_cache.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "third_party/skia/include/gpu/GrBackendSurface.h"
@@ -35,16 +34,13 @@ static const int kGrCacheMaxCount = 8192;
 // system channel.
 static const size_t kGrCacheMaxByteSize = 24 * (1 << 20);
 
-GPUSurfaceGL::GPUSurfaceGL(GPUSurfaceGLDelegate* delegate,
-                           bool render_to_surface)
-    : delegate_(delegate),
-      render_to_surface_(render_to_surface),
-      weak_factory_(this) {
-  auto context_switch = delegate_->GLContextMakeCurrent();
+sk_sp<GrDirectContext> GPUSurfaceGL::MakeGLContext(
+    GPUSurfaceGLDelegate* delegate) {
+  auto context_switch = delegate->GLContextMakeCurrent();
   if (!context_switch->GetResult()) {
     FML_LOG(ERROR)
         << "Could not make the context current to setup the gr context.";
-    return;
+    return nullptr;
   }
 
   GrContextOptions options;
@@ -65,32 +61,31 @@ GPUSurfaceGL::GPUSurfaceGL(GPUSurfaceGLDelegate* delegate,
   // TODO(goderbauer): remove option when skbug.com/7523 is fixed.
   // A similar work-around is also used in shell/common/io_manager.cc.
   options.fDisableGpuYUVConversion = true;
+  auto context = GrDirectContext::MakeGL(delegate->GetGLInterface(), options);
 
-  auto context = GrDirectContext::MakeGL(delegate_->GetGLInterface(), options);
-
-  if (context == nullptr) {
+  if (!context) {
     FML_LOG(ERROR) << "Failed to setup Skia Gr context.";
-    return;
+    return nullptr;
   }
 
-  context_ = std::move(context);
-
-  context_->setResourceCacheLimits(kGrCacheMaxCount, kGrCacheMaxByteSize);
-
-  context_owner_ = true;
-
-  valid_ = true;
+  context->setResourceCacheLimits(kGrCacheMaxCount, kGrCacheMaxByteSize);
 
   std::vector<PersistentCache::SkSLCache> caches =
       PersistentCache::GetCacheForProcess()->LoadSkSLs();
   int compiled_count = 0;
   for (const auto& cache : caches) {
-    compiled_count += context_->precompileShader(*cache.first, *cache.second);
+    compiled_count += context->precompileShader(*cache.first, *cache.second);
   }
   FML_LOG(INFO) << "Found " << caches.size() << " SkSL shaders; precompiled "
                 << compiled_count;
 
-  delegate_->GLContextClearCurrent();
+  return context;
+}
+
+GPUSurfaceGL::GPUSurfaceGL(GPUSurfaceGLDelegate* delegate,
+                           bool render_to_surface)
+    : GPUSurfaceGL(MakeGLContext(delegate), delegate, render_to_surface) {
+  context_owner_ = true;
 }
 
 GPUSurfaceGL::GPUSurfaceGL(sk_sp<GrDirectContext> gr_context,
@@ -98,6 +93,7 @@ GPUSurfaceGL::GPUSurfaceGL(sk_sp<GrDirectContext> gr_context,
                            bool render_to_surface)
     : delegate_(delegate),
       context_(gr_context),
+      context_owner_(false),
       render_to_surface_(render_to_surface),
       weak_factory_(this) {
   auto context_switch = delegate_->GLContextMakeCurrent();
@@ -109,8 +105,7 @@ GPUSurfaceGL::GPUSurfaceGL(sk_sp<GrDirectContext> gr_context,
 
   delegate_->GLContextClearCurrent();
 
-  valid_ = true;
-  context_owner_ = false;
+  valid_ = gr_context != nullptr;
 }
 
 GPUSurfaceGL::~GPUSurfaceGL() {
@@ -125,6 +120,7 @@ GPUSurfaceGL::~GPUSurfaceGL() {
   }
 
   onscreen_surface_ = nullptr;
+  fbo_id_ = 0;
   if (context_owner_) {
     context_->releaseResourcesAndAbandonContext();
   }
@@ -169,9 +165,7 @@ static sk_sp<SkSurface> WrapOnscreenSurface(GrDirectContext* context,
   );
 
   sk_sp<SkColorSpace> colorspace = SkColorSpace::MakeSRGB();
-
-  SkSurfaceProps surface_props(
-      SkSurfaceProps::InitType::kLegacyFontHost_InitType);
+  SkSurfaceProps surface_props(0, kUnknown_SkPixelGeometry);
 
   return SkSurface::MakeFromBackendRenderTarget(
       context,                                       // gr context
@@ -196,6 +190,7 @@ bool GPUSurfaceGL::CreateOrUpdateSurfaces(const SkISize& size) {
 
   // Either way, we need to get rid of previous surface.
   onscreen_surface_ = nullptr;
+  fbo_id_ = 0;
 
   if (size.isEmpty()) {
     FML_LOG(ERROR) << "Cannot create surfaces of empty size.";
@@ -204,11 +199,13 @@ bool GPUSurfaceGL::CreateOrUpdateSurfaces(const SkISize& size) {
 
   sk_sp<SkSurface> onscreen_surface;
 
-  onscreen_surface =
-      WrapOnscreenSurface(context_.get(),            // GL context
-                          size,                      // root surface size
-                          delegate_->GLContextFBO()  // window FBO ID
-      );
+  GLFrameInfo frame_info = {static_cast<uint32_t>(size.width()),
+                            static_cast<uint32_t>(size.height())};
+  const uint32_t fbo_id = delegate_->GLContextFBO(frame_info);
+  onscreen_surface = WrapOnscreenSurface(context_.get(),  // GL context
+                                         size,            // root surface size
+                                         fbo_id           // window FBO ID
+  );
 
   if (onscreen_surface == nullptr) {
     // If the onscreen surface could not be wrapped. There is absolutely no
@@ -218,6 +215,7 @@ bool GPUSurfaceGL::CreateOrUpdateSurfaces(const SkISize& size) {
   }
 
   onscreen_surface_ = std::move(onscreen_surface);
+  fbo_id_ = fbo_id;
 
   return true;
 }
@@ -279,7 +277,7 @@ bool GPUSurfaceGL::PresentSurface(SkCanvas* canvas) {
     onscreen_surface_->getCanvas()->flush();
   }
 
-  if (!delegate_->GLContextPresent()) {
+  if (!delegate_->GLContextPresent(fbo_id_)) {
     return false;
   }
 
@@ -287,12 +285,16 @@ bool GPUSurfaceGL::PresentSurface(SkCanvas* canvas) {
     auto current_size =
         SkISize::Make(onscreen_surface_->width(), onscreen_surface_->height());
 
+    GLFrameInfo frame_info = {static_cast<uint32_t>(current_size.width()),
+                              static_cast<uint32_t>(current_size.height())};
+
     // The FBO has changed, ask the delegate for the new FBO and do a surface
     // re-wrap.
+    const uint32_t fbo_id = delegate_->GLContextFBO(frame_info);
     auto new_onscreen_surface =
-        WrapOnscreenSurface(context_.get(),            // GL context
-                            current_size,              // root surface size
-                            delegate_->GLContextFBO()  // window FBO ID
+        WrapOnscreenSurface(context_.get(),  // GL context
+                            current_size,    // root surface size
+                            fbo_id           // window FBO ID
         );
 
     if (!new_onscreen_surface) {
@@ -300,6 +302,7 @@ bool GPUSurfaceGL::PresentSurface(SkCanvas* canvas) {
     }
 
     onscreen_surface_ = std::move(new_onscreen_surface);
+    fbo_id_ = fbo_id;
   }
 
   return true;
@@ -327,13 +330,13 @@ GrDirectContext* GPUSurfaceGL::GetContext() {
 }
 
 // |Surface|
-flutter::ExternalViewEmbedder* GPUSurfaceGL::GetExternalViewEmbedder() {
-  return delegate_->GetExternalViewEmbedder();
+std::unique_ptr<GLContextResult> GPUSurfaceGL::MakeRenderContextCurrent() {
+  return delegate_->GLContextMakeCurrent();
 }
 
 // |Surface|
-std::unique_ptr<GLContextResult> GPUSurfaceGL::MakeRenderContextCurrent() {
-  return delegate_->GLContextMakeCurrent();
+bool GPUSurfaceGL::ClearRenderContext() {
+  return delegate_->GLContextClearCurrent();
 }
 
 }  // namespace flutter

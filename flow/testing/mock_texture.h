@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/flow/texture.h"
-#include "flutter/testing/assertions_skia.h"
-
 #include <ostream>
 #include <vector>
+
+#include "flutter/common/graphics/texture.h"
+#include "flutter/testing/assertions_skia.h"
 
 namespace flutter {
 namespace testing {
@@ -21,7 +21,7 @@ class MockTexture : public Texture {
     SkRect bounds;
     bool freeze;
     GrDirectContext* context;
-    SkFilterQuality filter_quality;
+    SkSamplingOptions sampling;
   };
 
   explicit MockTexture(int64_t textureId);
@@ -31,7 +31,7 @@ class MockTexture : public Texture {
              const SkRect& bounds,
              bool freeze,
              GrDirectContext* context,
-             SkFilterQuality filter_quality) override;
+             const SkSamplingOptions& sampling) override;
 
   void OnGrContextCreated() override { gr_context_created_ = true; }
   void OnGrContextDestroyed() override { gr_context_destroyed_ = true; }

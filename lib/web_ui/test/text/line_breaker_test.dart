@@ -2,15 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// @dart = 2.10
-import 'package:test/test.dart';
+// @dart = 2.12
+import 'package:test/bootstrap/browser.dart'; // ignore: import_of_legacy_library_into_null_safe
+import 'package:test/test.dart'; // ignore: import_of_legacy_library_into_null_safe
 
 import 'package:ui/src/engine.dart';
 import 'package:ui/ui.dart';
 
-import 'line_breaker_test_data.dart';
+import 'line_breaker_test_helper.dart';
+import 'line_breaker_test_raw_data.dart';
 
 void main() {
+  internalBootstrapBrowserTest(() => testMain);
+}
+
+void testMain() {
   group('nextLineBreak', () {
     test('Does not go beyond the ends of a string', () {
       expect(split('foo'), <Line>[
@@ -219,8 +225,9 @@ void main() {
     });
 
     test('comprehensive test', () {
-      for (int t = 0; t < data.length; t++) {
-        final TestCase testCase = data[t];
+      final List<TestCase> testCollection = parseRawTestData(rawLineBreakTestData);
+      for (int t = 0; t < testCollection.length; t++) {
+        final TestCase testCase = testCollection[t];
         final String text = testCase.toText();
 
         int lastLineBreak = 0;
@@ -245,6 +252,14 @@ void main() {
                   '"$text"\n'
                   '\nExpected line break at {$lastLineBreak - $i} but found line break at {$lastLineBreak - ${result.index}}.',
             );
+
+            // Since this is a line break, passing a `maxEnd` that's greater
+            // should return the same line break.
+            final LineBreakResult maxEndResult =
+                nextLineBreak(text, lastLineBreak, maxEnd: i + 1);
+            expect(maxEndResult.index, i);
+            expect(maxEndResult.type, isNot(LineBreakType.prohibited));
+
             lastLineBreak = i;
           } else {
             // This isn't a line break opportunity so the line break should be
@@ -257,6 +272,13 @@ void main() {
                   '"$text"\n'
                   '\nUnexpected line break found at {$lastLineBreak - $i}.',
             );
+
+            // Since this isn't a line break, passing it as a `maxEnd` should
+            // return `maxEnd` as a prohibited line break type.
+            final LineBreakResult maxEndResult =
+                nextLineBreak(text, lastLineBreak, maxEnd: i);
+            expect(maxEndResult.index, i);
+            expect(maxEndResult.type, LineBreakType.prohibited);
           }
         }
       }

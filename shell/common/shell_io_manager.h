@@ -55,6 +55,10 @@ class ShellIOManager final : public IOManager {
   // |IOManager|
   std::shared_ptr<fml::SyncSwitch> GetIsGpuDisabledSyncSwitch() override;
 
+  sk_sp<GrDirectContext> GetSharedResourceContext() const {
+    return resource_context_;
+  };
+
  private:
   // Resource context management.
   sk_sp<GrDirectContext> resource_context_;
@@ -64,9 +68,9 @@ class ShellIOManager final : public IOManager {
   // Unref queue management.
   fml::RefPtr<flutter::SkiaUnrefQueue> unref_queue_;
 
-  fml::WeakPtrFactory<ShellIOManager> weak_factory_;
-
   std::shared_ptr<fml::SyncSwitch> is_gpu_disabled_sync_switch_;
+
+  fml::WeakPtrFactory<ShellIOManager> weak_factory_;
 
   FML_DISALLOW_COPY_AND_ASSIGN(ShellIOManager);
 };

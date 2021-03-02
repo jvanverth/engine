@@ -4,14 +4,19 @@
 
 import 'dart:math' as math;
 
-import 'package:ui/ui.dart';
-import 'package:test/test.dart';
+import 'package:test/bootstrap/browser.dart'; // ignore: import_of_legacy_library_into_null_safe
+import 'package:test/test.dart'; // ignore: import_of_legacy_library_into_null_safe
+import 'package:ui/ui.dart'; // ignore: import_of_legacy_library_into_null_safe
 
-import '../matchers.dart';
+import '../matchers.dart'; // ignore: import_of_legacy_library_into_null_safe
 
 const double kTolerance = 0.001;
 
 void main() {
+  internalBootstrapBrowserTest(() => testMain);
+}
+
+void testMain() {
   group('PathMetric length', () {
     test('empty path', () {
       Path path = Path();

@@ -3,10 +3,15 @@
 // found in the LICENSE file.
 
 import 'dart:typed_data';
-import 'package:test/test.dart';
+import 'package:test/bootstrap/browser.dart'; // ignore: import_of_legacy_library_into_null_safe
+import 'package:test/test.dart'; // ignore: import_of_legacy_library_into_null_safe
 import 'package:ui/src/engine.dart';
 
 void main() {
+  internalBootstrapBrowserTest(() => testMain);
+}
+
+void testMain() {
   group('Float Int conversions', (){
     test('Should convert signbit to 2\'s compliment', () {
       expect(signBitTo2sCompliment(0), 0);

@@ -4,10 +4,10 @@
 
 #include "flutter/shell/platform/windows/public/flutter_windows.h"
 
-#include <assert.h>
 #include <io.h>
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -15,17 +15,13 @@
 #include <memory>
 #include <vector>
 
-#include "flutter/shell/platform/common/cpp/client_wrapper/include/flutter/plugin_registrar.h"
-#include "flutter/shell/platform/common/cpp/incoming_message_dispatcher.h"
-#include "flutter/shell/platform/common/cpp/path_utils.h"
+#include "flutter/shell/platform/common/client_wrapper/include/flutter/plugin_registrar.h"
+#include "flutter/shell/platform/common/incoming_message_dispatcher.h"
+#include "flutter/shell/platform/common/path_utils.h"
 #include "flutter/shell/platform/embedder/embedder.h"
 #include "flutter/shell/platform/windows/flutter_project_bundle.h"
 #include "flutter/shell/platform/windows/flutter_windows_engine.h"
 #include "flutter/shell/platform/windows/flutter_windows_view.h"
-#include "flutter/shell/platform/windows/win32_dpi_utils.h"
-#include "flutter/shell/platform/windows/win32_flutter_window.h"
-#include "flutter/shell/platform/windows/win32_platform_handler.h"
-#include "flutter/shell/platform/windows/win32_task_runner.h"
 #include "flutter/shell/platform/windows/window_binding_handler.h"
 #include "flutter/shell/platform/windows/window_state.h"
 
@@ -37,35 +33,32 @@ static flutter::FlutterWindowsEngine* EngineFromHandle(
   return reinterpret_cast<flutter::FlutterWindowsEngine*>(ref);
 }
 
-// Returns opaque API handle for the given engine instance.
+// Returns the opaque API handle for the given engine instance.
 static FlutterDesktopEngineRef HandleForEngine(
     flutter::FlutterWindowsEngine* engine) {
   return reinterpret_cast<FlutterDesktopEngineRef>(engine);
 }
 
-FlutterDesktopViewControllerRef FlutterDesktopViewControllerCreate(
-    int width,
-    int height,
-    FlutterDesktopEngineRef engine) {
-  std::unique_ptr<flutter::WindowBindingHandler> window_wrapper =
-      std::make_unique<flutter::Win32FlutterWindow>(width, height);
+// Returns the view corresponding to the given opaque API handle.
+static flutter::FlutterWindowsView* ViewFromHandle(FlutterDesktopViewRef ref) {
+  return reinterpret_cast<flutter::FlutterWindowsView*>(ref);
+}
 
-  auto state = std::make_unique<FlutterDesktopViewControllerState>();
-  state->view =
-      std::make_unique<flutter::FlutterWindowsView>(std::move(window_wrapper));
-  state->view->CreateRenderSurface();
-  state->view_wrapper = std::make_unique<FlutterDesktopView>();
-  state->view_wrapper->view = state->view.get();
+// Returns the opaque API handle for the given view instance.
+static FlutterDesktopViewRef HandleForView(flutter::FlutterWindowsView* view) {
+  return reinterpret_cast<FlutterDesktopViewRef>(view);
+}
 
-  // Take ownership of the engine, starting it if necessary.
-  state->view->SetEngine(
-      std::unique_ptr<flutter::FlutterWindowsEngine>(EngineFromHandle(engine)));
-  if (!state->view->GetEngine()->running()) {
-    if (!state->view->GetEngine()->RunWithEntrypoint(nullptr)) {
-      return nullptr;
-    }
-  }
-  return state.release();
+// Returns the texture registrar corresponding to the given opaque API handle.
+static flutter::FlutterWindowsTextureRegistrar* TextureRegistrarFromHandle(
+    FlutterDesktopTextureRegistrarRef ref) {
+  return reinterpret_cast<flutter::FlutterWindowsTextureRegistrar*>(ref);
+}
+
+// Returns the opaque API handle for the given texture registrar instance.
+static FlutterDesktopTextureRegistrarRef HandleForTextureRegistrar(
+    flutter::FlutterWindowsTextureRegistrar* registrar) {
+  return reinterpret_cast<FlutterDesktopTextureRegistrarRef>(registrar);
 }
 
 void FlutterDesktopViewControllerDestroy(
@@ -80,7 +73,12 @@ FlutterDesktopEngineRef FlutterDesktopViewControllerGetEngine(
 
 FlutterDesktopViewRef FlutterDesktopViewControllerGetView(
     FlutterDesktopViewControllerRef controller) {
-  return controller->view_wrapper.get();
+  return HandleForView(controller->view.get());
+}
+
+void FlutterDesktopViewControllerForceRedraw(
+    FlutterDesktopViewControllerRef controller) {
+  controller->view->ForceRedraw();
 }
 
 FlutterDesktopEngineRef FlutterDesktopEngineCreate(
@@ -105,8 +103,8 @@ bool FlutterDesktopEngineRun(FlutterDesktopEngineRef engine,
   return EngineFromHandle(engine)->RunWithEntrypoint(entry_point);
 }
 
-uint64_t FlutterDesktopEngineProcessMessages(FlutterDesktopEngineRef engine) {
-  return EngineFromHandle(engine)->task_runner()->ProcessTasks().count();
+void FlutterDesktopEngineReloadSystemFonts(FlutterDesktopEngineRef engine) {
+  EngineFromHandle(engine)->ReloadSystemFonts();
 }
 
 FlutterDesktopPluginRegistrarRef FlutterDesktopEngineGetPluginRegistrar(
@@ -119,21 +117,24 @@ FlutterDesktopPluginRegistrarRef FlutterDesktopEngineGetPluginRegistrar(
   return EngineFromHandle(engine)->GetRegistrar();
 }
 
-HWND FlutterDesktopViewGetHWND(FlutterDesktopViewRef view_ref) {
-  return std::get<HWND>(*view_ref->view->GetRenderTarget());
+FlutterDesktopMessengerRef FlutterDesktopEngineGetMessenger(
+    FlutterDesktopEngineRef engine) {
+  return EngineFromHandle(engine)->messenger();
+}
+
+FlutterDesktopTextureRegistrarRef FlutterDesktopEngineGetTextureRegistrar(
+    FlutterDesktopEngineRef engine) {
+  return HandleForTextureRegistrar(
+      EngineFromHandle(engine)->texture_registrar());
+}
+
+HWND FlutterDesktopViewGetHWND(FlutterDesktopViewRef view) {
+  return std::get<HWND>(*ViewFromHandle(view)->GetRenderTarget());
 }
 
 FlutterDesktopViewRef FlutterDesktopPluginRegistrarGetView(
     FlutterDesktopPluginRegistrarRef registrar) {
-  return registrar->view.get();
-}
-
-UINT FlutterDesktopGetDpiForHWND(HWND hwnd) {
-  return flutter::GetDpiForHWND(hwnd);
-}
-
-UINT FlutterDesktopGetDpiForMonitor(HMONITOR monitor) {
-  return flutter::GetDpiForMonitor(monitor);
+  return HandleForView(registrar->engine->view());
 }
 
 void FlutterDesktopResyncOutputStreams() {
@@ -147,17 +148,17 @@ void FlutterDesktopResyncOutputStreams() {
   std::ios::sync_with_stdio();
 }
 
-// Implementations of common/cpp/ API methods.
+// Implementations of common/ API methods.
 
-FlutterDesktopMessengerRef FlutterDesktopRegistrarGetMessenger(
+FlutterDesktopMessengerRef FlutterDesktopPluginRegistrarGetMessenger(
     FlutterDesktopPluginRegistrarRef registrar) {
-  return registrar->messenger.get();
+  return registrar->engine->messenger();
 }
 
-void FlutterDesktopRegistrarSetDestructionHandler(
+void FlutterDesktopPluginRegistrarSetDestructionHandler(
     FlutterDesktopPluginRegistrarRef registrar,
-    FlutterDesktopOnRegistrarDestroyed callback) {
-  registrar->destruction_handler = callback;
+    FlutterDesktopOnPluginRegistrarDestroyed callback) {
+  registrar->engine->SetPluginRegistrarDestructionCallback(callback);
 }
 
 bool FlutterDesktopMessengerSendWithReply(FlutterDesktopMessengerRef messenger,
@@ -166,33 +167,8 @@ bool FlutterDesktopMessengerSendWithReply(FlutterDesktopMessengerRef messenger,
                                           const size_t message_size,
                                           const FlutterDesktopBinaryReply reply,
                                           void* user_data) {
-  FlutterPlatformMessageResponseHandle* response_handle = nullptr;
-  if (reply != nullptr && user_data != nullptr) {
-    FlutterEngineResult result = FlutterPlatformMessageCreateResponseHandle(
-        messenger->engine, reply, user_data, &response_handle);
-    if (result != kSuccess) {
-      std::cout << "Failed to create response handle\n";
-      return false;
-    }
-  }
-
-  FlutterPlatformMessage platform_message = {
-      sizeof(FlutterPlatformMessage),
-      channel,
-      message,
-      message_size,
-      response_handle,
-  };
-
-  FlutterEngineResult message_result =
-      FlutterEngineSendPlatformMessage(messenger->engine, &platform_message);
-
-  if (response_handle != nullptr) {
-    FlutterPlatformMessageReleaseResponseHandle(messenger->engine,
-                                                response_handle);
-  }
-
-  return message_result == kSuccess;
+  return messenger->engine->SendPlatformMessage(channel, message, message_size,
+                                                reply, user_data);
 }
 
 bool FlutterDesktopMessengerSend(FlutterDesktopMessengerRef messenger,
@@ -208,13 +184,39 @@ void FlutterDesktopMessengerSendResponse(
     const FlutterDesktopMessageResponseHandle* handle,
     const uint8_t* data,
     size_t data_length) {
-  FlutterEngineSendPlatformMessageResponse(messenger->engine, handle, data,
-                                           data_length);
+  messenger->engine->SendPlatformMessageResponse(handle, data, data_length);
 }
 
 void FlutterDesktopMessengerSetCallback(FlutterDesktopMessengerRef messenger,
                                         const char* channel,
                                         FlutterDesktopMessageCallback callback,
                                         void* user_data) {
-  messenger->dispatcher->SetMessageCallback(channel, callback, user_data);
+  messenger->engine->message_dispatcher()->SetMessageCallback(channel, callback,
+                                                              user_data);
+}
+
+FlutterDesktopTextureRegistrarRef FlutterDesktopRegistrarGetTextureRegistrar(
+    FlutterDesktopPluginRegistrarRef registrar) {
+  return HandleForTextureRegistrar(registrar->engine->texture_registrar());
+}
+
+int64_t FlutterDesktopTextureRegistrarRegisterExternalTexture(
+    FlutterDesktopTextureRegistrarRef texture_registrar,
+    const FlutterDesktopTextureInfo* texture_info) {
+  return TextureRegistrarFromHandle(texture_registrar)
+      ->RegisterTexture(texture_info);
+}
+
+bool FlutterDesktopTextureRegistrarUnregisterExternalTexture(
+    FlutterDesktopTextureRegistrarRef texture_registrar,
+    int64_t texture_id) {
+  return TextureRegistrarFromHandle(texture_registrar)
+      ->UnregisterTexture(texture_id);
+}
+
+bool FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
+    FlutterDesktopTextureRegistrarRef texture_registrar,
+    int64_t texture_id) {
+  return TextureRegistrarFromHandle(texture_registrar)
+      ->MarkTextureFrameAvailable(texture_id);
 }

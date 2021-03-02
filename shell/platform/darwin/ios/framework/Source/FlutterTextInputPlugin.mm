@@ -2,14 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h"
-#include "flutter/fml/platform/darwin/string_range_sanitization.h"
+#import "flutter/shell/platform/darwin/ios/framework/Source/FlutterTextInputPlugin.h"
 
-#include <Foundation/Foundation.h>
-#include <UIKit/UIKit.h>
+#import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
+
+#include "flutter/fml/logging.h"
+#include "flutter/fml/platform/darwin/string_range_sanitization.h"
 
 static const char _kTextAffinityDownstream[] = "TextAffinity.downstream";
 static const char _kTextAffinityUpstream[] = "TextAffinity.upstream";
+// A delay before enabling the accessibility of FlutterTextInputView after
+// it is activated.
+static constexpr double kUITextInputAccessibilityEnablingDelaySeconds = 0.5;
+
+// The "canonical" invalid CGRect, similar to CGRectNull, used to
+// indicate a CGRect involved in firstRectForRange calculation is
+// invalid. The specific value is chosen so that if firstRectForRange
+// returns kInvalidFirstRect, iOS will not show the IME candidates view.
+const CGRect kInvalidFirstRect = {{-1, -1}, {9999, 9999}};
 
 #pragma mark - TextInputConfiguration Field Names
 static NSString* const kSecureTextEntry = @"obscureText";
@@ -31,6 +42,7 @@ static NSString* const kAutofillHints = @"hints";
 static NSString* const kAutocorrectionType = @"autocorrect";
 
 #pragma mark - Static Functions
+
 static UIKeyboardType ToUIKeyboardType(NSDictionary* type) {
   NSString* inputType = type[@"name"];
   if ([inputType isEqualToString:@"TextInputType.address"])
@@ -413,20 +425,25 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
 
 @interface FlutterTextInputView ()
 @property(nonatomic, copy) NSString* autofillId;
+@property(nonatomic, readonly) CATransform3D editableTransform;
+@property(nonatomic, assign) CGRect markedRect;
 @property(nonatomic) BOOL isVisibleToAutofill;
+@property(nonatomic, assign) BOOL accessibilityEnabled;
+
+- (void)setEditableTransform:(NSArray*)matrix;
 @end
 
 @implementation FlutterTextInputView {
   int _textInputClient;
   const char* _selectionAffinity;
   FlutterTextRange* _selectedTextRange;
+  CGRect _cachedFirstRect;
 }
 
 @synthesize tokenizer = _tokenizer;
 
 - (instancetype)init {
   self = [super init];
-
   if (self) {
     _textInputClient = 0;
     _selectionAffinity = _kTextAffinityUpstream;
@@ -435,6 +452,11 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
     _text = [[NSMutableString alloc] init];
     _markedText = [[NSMutableString alloc] init];
     _selectedTextRange = [[FlutterTextRange alloc] initWithNSRange:NSMakeRange(0, 0)];
+    _markedRect = kInvalidFirstRect;
+    _cachedFirstRect = kInvalidFirstRect;
+    // Initialize with the zero matrix which is not
+    // an affine transform.
+    _editableTransform = CATransform3D();
 
     // UITextInputTraits
     _autocapitalizationType = UITextAutocapitalizationTypeSentences;
@@ -445,6 +467,7 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
     _keyboardType = UIKeyboardTypeDefault;
     _returnKeyType = UIReturnKeyDone;
     _secureTextEntry = NO;
+    _accessibilityEnabled = NO;
     if (@available(iOS 11.0, *)) {
       _smartQuotesType = UITextSmartQuotesTypeYes;
       _smartDashesType = UITextSmartDashesTypeYes;
@@ -520,27 +543,21 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   _textInputClient = client;
 }
 
-// Return true if the new input state needs to be synced back to the framework.
-- (BOOL)setTextInputState:(NSDictionary*)state {
+- (void)setTextInputState:(NSDictionary*)state {
   NSString* newText = state[@"text"];
   BOOL textChanged = ![self.text isEqualToString:newText];
   if (textChanged) {
     [self.inputDelegate textWillChange:self];
     [self.text setString:newText];
   }
-  BOOL needsEditingStateUpdate = textChanged;
   NSInteger composingBase = [state[@"composingBase"] intValue];
   NSInteger composingExtent = [state[@"composingExtent"] intValue];
   NSRange composingRange = [self clampSelection:NSMakeRange(MIN(composingBase, composingExtent),
                                                             ABS(composingBase - composingExtent))
                                         forText:self.text];
-  FlutterTextRange* newMarkedRange =
+
+  self.markedTextRange =
       composingRange.length > 0 ? [FlutterTextRange rangeWithNSRange:composingRange] : nil;
-  needsEditingStateUpdate =
-      needsEditingStateUpdate ||
-      (!newMarkedRange ? self.markedTextRange != nil
-                       : ![newMarkedRange isEqualTo:(FlutterTextRange*)self.markedTextRange]);
-  self.markedTextRange = newMarkedRange;
 
   NSRange selectedRange = [self clampSelectionFromBase:[state[@"selectionBase"] intValue]
                                                 extent:[state[@"selectionExtent"] intValue]
@@ -548,7 +565,6 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
 
   NSRange oldSelectedRange = [(FlutterTextRange*)self.selectedTextRange range];
   if (!NSEqualRanges(selectedRange, oldSelectedRange)) {
-    needsEditingStateUpdate = YES;
     [self.inputDelegate selectionWillChange:self];
 
     [self setSelectedTextRangeLocal:[FlutterTextRange rangeWithNSRange:selectedRange]];
@@ -562,9 +578,6 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   if (textChanged) {
     [self.inputDelegate textDidChange:self];
   }
-
-  // For consistency with Android behavior, send an update to the framework if anything changed.
-  return needsEditingStateUpdate;
 }
 
 // Extracts the selection information from the editing state dictionary.
@@ -771,6 +784,8 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
 }
 
 - (void)unmarkText {
+  if (!self.markedTextRange)
+    return;
   self.markedTextRange = nil;
   [self updateEditingState];
 }
@@ -906,19 +921,76 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
 
 #pragma mark - UITextInput cursor, selection rect handling
 
+- (void)setMarkedRect:(CGRect)markedRect {
+  _markedRect = markedRect;
+  // Invalidate the cache.
+  _cachedFirstRect = kInvalidFirstRect;
+}
+
+// This method expects a 4x4 perspective matrix
+// stored in a NSArray in column-major order.
+- (void)setEditableTransform:(NSArray*)matrix {
+  CATransform3D* transform = &_editableTransform;
+
+  transform->m11 = [matrix[0] doubleValue];
+  transform->m12 = [matrix[1] doubleValue];
+  transform->m13 = [matrix[2] doubleValue];
+  transform->m14 = [matrix[3] doubleValue];
+
+  transform->m21 = [matrix[4] doubleValue];
+  transform->m22 = [matrix[5] doubleValue];
+  transform->m23 = [matrix[6] doubleValue];
+  transform->m24 = [matrix[7] doubleValue];
+
+  transform->m31 = [matrix[8] doubleValue];
+  transform->m32 = [matrix[9] doubleValue];
+  transform->m33 = [matrix[10] doubleValue];
+  transform->m34 = [matrix[11] doubleValue];
+
+  transform->m41 = [matrix[12] doubleValue];
+  transform->m42 = [matrix[13] doubleValue];
+  transform->m43 = [matrix[14] doubleValue];
+  transform->m44 = [matrix[15] doubleValue];
+
+  // Invalidate the cache.
+  _cachedFirstRect = kInvalidFirstRect;
+}
+
 // The following methods are required to support force-touch cursor positioning
 // and to position the
 // candidates view for multi-stage input methods (e.g., Japanese) when using a
 // physical keyboard.
 
 - (CGRect)firstRectForRange:(UITextRange*)range {
-  // multi-stage text is handled in the framework.
-  if (_markedTextRange != nil) {
-    return CGRectZero;
-  }
+  NSAssert([range.start isKindOfClass:[FlutterTextPosition class]],
+           @"Expected a FlutterTextPosition for range.start (got %@).", [range.start class]);
+  NSAssert([range.end isKindOfClass:[FlutterTextPosition class]],
+           @"Expected a FlutterTextPosition for range.end (got %@).", [range.end class]);
 
   NSUInteger start = ((FlutterTextPosition*)range.start).index;
   NSUInteger end = ((FlutterTextPosition*)range.end).index;
+  if (_markedTextRange != nil) {
+    // The candidates view can't be shown if _editableTransform is not affine,
+    // or markedRect is invalid.
+    if (CGRectEqualToRect(kInvalidFirstRect, _markedRect) ||
+        !CATransform3DIsAffine(_editableTransform)) {
+      return kInvalidFirstRect;
+    }
+
+    if (CGRectEqualToRect(_cachedFirstRect, kInvalidFirstRect)) {
+      // If the width returned is too small, that means the framework sent us
+      // the caret rect instead of the marked text rect. Expand it to 0.1 so
+      // the IME candidates view show up.
+      double nonZeroWidth = MAX(_markedRect.size.width, 0.1);
+      CGRect rect = _markedRect;
+      rect.size = CGSizeMake(nonZeroWidth, rect.size.height);
+      _cachedFirstRect =
+          CGRectApplyAffineTransform(rect, CATransform3DGetAffineTransform(_editableTransform));
+    }
+
+    return _cachedFirstRect;
+  }
+
   [_textInputDelegate showAutocorrectionPromptRectForStart:start
                                                        end:end
                                                 withClient:_textInputClient];
@@ -1040,16 +1112,52 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
     [self replaceRange:_selectedTextRange withText:@""];
 }
 
+- (void)postAccessibilityNotification:(UIAccessibilityNotifications)notification target:(id)target {
+  UIAccessibilityPostNotification(notification, target);
+}
+
+- (void)accessibilityElementDidBecomeFocused {
+  if ([self accessibilityElementIsFocused]) {
+    // For most of the cases, this flutter text input view should never
+    // receive the focus. If we do receive the focus, we make the best effort
+    // to send the focus back to the real text field.
+    FML_DCHECK(_backingTextInputAccessibilityObject);
+    [self postAccessibilityNotification:UIAccessibilityScreenChangedNotification
+                                 target:_backingTextInputAccessibilityObject];
+  }
+}
+
 - (BOOL)accessibilityElementsHidden {
-  // We are hiding this accessibility element.
-  // There are 2 accessible elements involved in text entry in 2 different parts of the view
-  // hierarchy. This `FlutterTextInputView` is injected at the top of key window. We use this as a
-  // `UITextInput` protocol to bridge text edit events between Flutter and iOS.
-  //
-  // We also create ur own custom `UIAccessibilityElements` tree with our `SemanticsObject` to
-  // mimic the semantics tree from Flutter. We want the text field to be represented as a
-  // `TextInputSemanticsObject` in that `SemanticsObject` tree rather than in this
-  // `FlutterTextInputView` bridge which doesn't appear above a text field from the Flutter side.
+  return !_accessibilityEnabled;
+}
+
+@end
+
+/**
+ * Hides `FlutterTextInputView` from iOS accessibility system so it
+ * does not show up twice, once where it is in the `UIView` hierarchy,
+ * and a second time as part of the `SemanticsObject` hierarchy.
+ *
+ * This prevents the `FlutterTextInputView` from receiving the focus
+ * due to swipping gesture.
+ *
+ * There are other cases the `FlutterTextInputView` may receive
+ * focus. One example is during screen changes, the accessibility
+ * tree will undergo a dramatic structural update. The Voiceover may
+ * decide to focus the `FlutterTextInputView` that is not involved
+ * in the structural update instead. If that happens, the
+ * `FlutterTextInputView` will make a best effort to direct the
+ * focus back to the `SemanticsObject`.
+ */
+@interface FlutterTextInputViewAccessibilityHider : UIView {
+}
+
+@end
+
+@implementation FlutterTextInputViewAccessibilityHider {
+}
+
+- (BOOL)accessibilityElementsHidden {
   return YES;
 }
 
@@ -1062,9 +1170,12 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
 @property(nonatomic, readonly)
     NSMutableDictionary<NSString*, FlutterTextInputView*>* autofillContext;
 @property(nonatomic, assign) FlutterTextInputView* activeView;
+@property(nonatomic, strong) FlutterTextInputViewAccessibilityHider* inputHider;
 @end
 
-@implementation FlutterTextInputPlugin
+@implementation FlutterTextInputPlugin {
+  NSTimer* _enableFlutterTextInputViewAccessibilityTimer;
+}
 
 @synthesize textInputDelegate = _textInputDelegate;
 
@@ -1076,6 +1187,7 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
     _reusableInputView.secureTextEntry = NO;
     _autofillContext = [[NSMutableDictionary alloc] init];
     _activeView = _reusableInputView;
+    _inputHider = [[FlutterTextInputViewAccessibilityHider alloc] init];
   }
 
   return self;
@@ -1084,9 +1196,17 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
 - (void)dealloc {
   [self hideTextInput];
   [_reusableInputView release];
+  [_inputHider release];
   [_autofillContext release];
-
   [super dealloc];
+}
+
+- (void)removeEnableFlutterTextInputViewAccessibilityTimer {
+  if (_enableFlutterTextInputViewAccessibilityTimer) {
+    [_enableFlutterTextInputViewAccessibilityTimer invalidate];
+    [_enableFlutterTextInputViewAccessibilityTimer release];
+    _enableFlutterTextInputViewAccessibilityTimer = nil;
+  }
 }
 
 - (UIView<UITextInput>*)textInputView {
@@ -1111,6 +1231,12 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   } else if ([method isEqualToString:@"TextInput.clearClient"]) {
     [self clearTextInputClient];
     result(nil);
+  } else if ([method isEqualToString:@"TextInput.setEditableSizeAndTransform"]) {
+    [self setEditableSizeAndTransform:args];
+    result(nil);
+  } else if ([method isEqualToString:@"TextInput.setMarkedTextRect"]) {
+    [self updateMarkedRect:args];
+    result(nil);
   } else if ([method isEqualToString:@"TextInput.finishAutofillContext"]) {
     [self triggerAutofillSave:[args boolValue]];
     result(nil);
@@ -1119,14 +1245,54 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   }
 }
 
+- (void)setEditableSizeAndTransform:(NSDictionary*)dictionary {
+  [_activeView setEditableTransform:dictionary[@"transform"]];
+}
+
+- (void)updateMarkedRect:(NSDictionary*)dictionary {
+  NSAssert(dictionary[@"x"] != nil && dictionary[@"y"] != nil && dictionary[@"width"] != nil &&
+               dictionary[@"height"] != nil,
+           @"Expected a dictionary representing a CGRect, got %@", dictionary);
+  CGRect rect = CGRectMake([dictionary[@"x"] doubleValue], [dictionary[@"y"] doubleValue],
+                           [dictionary[@"width"] doubleValue], [dictionary[@"height"] doubleValue]);
+  _activeView.markedRect = rect.size.width < 0 && rect.size.height < 0 ? kInvalidFirstRect : rect;
+}
+
 - (void)showTextInput {
   _activeView.textInputDelegate = _textInputDelegate;
-  [self addToKeyWindowIfNeeded:_activeView];
+  [self addToInputParentViewIfNeeded:_activeView];
+  // Adds a delay to prevent the text view from receiving accessibility
+  // focus in case it is activated during semantics updates.
+  //
+  // One common case is when the app navigates to a page with an auto
+  // focused text field. The text field will activate the FlutterTextInputView
+  // with a semantics update sent to the engine. The voiceover will focus
+  // the newly attached active view while performing accessibility update.
+  // This results in accessibility focus stuck at the FlutterTextInputView.
+  if (!_enableFlutterTextInputViewAccessibilityTimer) {
+    _enableFlutterTextInputViewAccessibilityTimer =
+        [[NSTimer scheduledTimerWithTimeInterval:kUITextInputAccessibilityEnablingDelaySeconds
+                                          target:self
+                                        selector:@selector(enableActiveViewAccessibility:)
+                                        userInfo:nil
+                                         repeats:NO] retain];
+  }
   [_activeView becomeFirstResponder];
 }
 
+- (void)enableActiveViewAccessibility:(NSTimer*)time {
+  if (_activeView.isFirstResponder) {
+    _activeView.accessibilityEnabled = YES;
+  }
+  [self removeEnableFlutterTextInputViewAccessibilityTimer];
+}
+
 - (void)hideTextInput {
+  [self removeEnableFlutterTextInputViewAccessibilityTimer];
+  _activeView.accessibilityEnabled = NO;
   [_activeView resignFirstResponder];
+  [_activeView removeFromSuperview];
+  [_inputHider removeFromSuperview];
 }
 
 - (void)triggerAutofillSave:(BOOL)saveEntries {
@@ -1143,10 +1309,11 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   }
 
   [self cleanUpViewHierarchy:YES clearText:!saveEntries];
-  [self addToKeyWindowIfNeeded:_activeView];
+  [self addToInputParentViewIfNeeded:_activeView];
 }
 
 - (void)setTextInputClient:(int)client withConfiguration:(NSDictionary*)configuration {
+  [self resetAllClientIds];
   // Hide all input views from autofill, only make those in the new configuration visible
   // to autofill.
   [self changeInputViewsAutofillVisibility:NO];
@@ -1168,11 +1335,19 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
       break;
   }
 
-  // Clean up views that should no longer be in the view hierarchy according to the
-  // updated autofill context.
-  [self cleanUpViewHierarchy:NO clearText:YES];
   [_activeView setTextInputClient:client];
   [_activeView reloadInputViews];
+
+  // Clean up views that no longer need to be in the view hierarchy, according to
+  // the current autofill context. The "garbage" input views are already made
+  // invisible to autofill and they can't `becomeFirstResponder`, we only remove
+  // them to free up resources and reduce the number of input views in the view
+  // hierarchy.
+  //
+  // This is scheduled on the runloop and delayed by 0.1s so we don't remove the
+  // text fields immediately (which seems to make the keyboard flicker).
+  // See: https://github.com/flutter/flutter/issues/64628.
+  [self performSelector:@selector(collectGarbageInputViews) withObject:nil afterDelay:0.1];
 }
 
 // Updates and shows an input field that is not password related and has no autofill
@@ -1188,7 +1363,7 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   }
 
   [_reusableInputView configureWithDictionary:configuration];
-  [self addToKeyWindowIfNeeded:_reusableInputView];
+  [self addToInputParentViewIfNeeded:_reusableInputView];
   _reusableInputView.textInputDelegate = _textInputDelegate;
 
   for (NSDictionary* field in configuration[kAssociatedAutofillFields]) {
@@ -1253,7 +1428,7 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
     inputView =
         needsPasswordAutofill ? [FlutterSecureTextInputView alloc] : [FlutterTextInputView alloc];
     inputView = [[inputView init] autorelease];
-    [self addToKeyWindowIfNeeded:inputView];
+    [self addToInputParentViewIfNeeded:inputView];
   }
 
   inputView.textInputDelegate = _textInputDelegate;
@@ -1261,23 +1436,32 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   return inputView;
 }
 
-// Removes every installed input field, unless it's in the current autofill
-// context. May remove the active view too if includeActiveView is YES.
-// When clearText is YES, the text on the input fields will be set to empty before
-// they are removed from the view hierarchy, to avoid autofill save .
-- (void)cleanUpViewHierarchy:(BOOL)includeActiveView clearText:(BOOL)clearText {
+// The UIView to add FlutterTextInputViews to.
+- (UIView*)keyWindow {
   UIWindow* keyWindow = [UIApplication sharedApplication].keyWindow;
   NSAssert(keyWindow != nullptr,
            @"The application must have a key window since the keyboard client "
            @"must be part of the responder chain to function");
+  return keyWindow;
+}
 
-  for (UIView* view in keyWindow.subviews) {
+// The UIView to add FlutterTextInputViews to.
+- (NSArray<UIView*>*)textInputViews {
+  return _inputHider.subviews;
+}
+
+// Removes every installed input field, unless it's in the current autofill
+// context. May remove the active view too if includeActiveView is YES.
+// When clearText is YES, the text on the input fields will be set to empty before
+// they are removed from the view hierarchy, to avoid triggering autofill save.
+- (void)cleanUpViewHierarchy:(BOOL)includeActiveView clearText:(BOOL)clearText {
+  for (UIView* view in self.textInputViews) {
     if ([view isKindOfClass:[FlutterTextInputView class]] &&
         (includeActiveView || view != _activeView)) {
       FlutterTextInputView* inputView = (FlutterTextInputView*)view;
       if (_autofillContext[inputView.autofillId] != view) {
         if (clearText) {
-          inputView.text.string = @"";
+          [inputView replaceRangeLocal:NSMakeRange(0, inputView.text.length) withText:@""];
         }
         [view removeFromSuperview];
       }
@@ -1285,13 +1469,14 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   }
 }
 
-- (void)changeInputViewsAutofillVisibility:(BOOL)newVisibility {
-  UIWindow* keyWindow = [UIApplication sharedApplication].keyWindow;
-  NSAssert(keyWindow != nullptr,
-           @"The application must have a key window since the keyboard client "
-           @"must be part of the responder chain to function");
+- (void)collectGarbageInputViews {
+  [self cleanUpViewHierarchy:NO clearText:YES];
+}
 
-  for (UIView* view in keyWindow.subviews) {
+// Changes the visibility of every FlutterTextInputView currently in the
+// view hierarchy.
+- (void)changeInputViewsAutofillVisibility:(BOOL)newVisibility {
+  for (UIView* view in self.textInputViews) {
     if ([view isKindOfClass:[FlutterTextInputView class]]) {
       FlutterTextInputView* inputView = (FlutterTextInputView*)view;
       inputView.isVisibleToAutofill = newVisibility;
@@ -1299,21 +1484,29 @@ static FlutterAutofillType autofillTypeOf(NSDictionary* configuration) {
   }
 }
 
-- (void)addToKeyWindowIfNeeded:(FlutterTextInputView*)inputView {
-  UIWindow* keyWindow = [UIApplication sharedApplication].keyWindow;
-  NSAssert(keyWindow != nullptr,
-           @"The application must have a key window since the keyboard client "
-           @"must be part of the responder chain to function");
+// Resets the client id of every FlutterTextInputView in the view hierarchy
+// to 0. Called when a new text input connection will be established.
+- (void)resetAllClientIds {
+  for (UIView* view in self.textInputViews) {
+    if ([view isKindOfClass:[FlutterTextInputView class]]) {
+      FlutterTextInputView* inputView = (FlutterTextInputView*)view;
+      [inputView setTextInputClient:0];
+    }
+  }
+}
 
-  if (inputView.window != keyWindow) {
-    [keyWindow addSubview:inputView];
+- (void)addToInputParentViewIfNeeded:(FlutterTextInputView*)inputView {
+  if (![inputView isDescendantOfView:_inputHider]) {
+    [_inputHider addSubview:inputView];
+  }
+  UIView* parentView = self.keyWindow;
+  if (_inputHider.superview != parentView) {
+    [parentView addSubview:_inputHider];
   }
 }
 
 - (void)setTextInputEditingState:(NSDictionary*)state {
-  if ([_activeView setTextInputState:state]) {
-    [_activeView updateEditingState];
-  }
+  [_activeView setTextInputState:state];
 }
 
 - (void)clearTextInputClient {

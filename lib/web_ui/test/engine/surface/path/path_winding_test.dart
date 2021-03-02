@@ -2,15 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// @dart = 2.10
+// @dart = 2.12
 
 import 'dart:math' as math;
-import 'package:test/test.dart';
+import 'package:test/bootstrap/browser.dart'; // ignore: import_of_legacy_library_into_null_safe
+import 'package:test/test.dart'; // ignore: import_of_legacy_library_into_null_safe
 import 'package:ui/ui.dart' hide window;
 import 'package:ui/src/engine.dart';
 
-/// Test winding and convexity of a path.
 void main() {
+  internalBootstrapBrowserTest(() => testMain);
+}
+
+/// Test winding and convexity of a path.
+void testMain() {
   group('Convexity', () {
     test('Empty path should be convex', () {
       final SurfacePath path = SurfacePath();
@@ -293,6 +298,7 @@ void main() {
         }
       }
     });
+
     test('Concave lines path', () {
       final SurfacePath path = SurfacePath();
       path.moveTo(-0.284071773, -0.0622361786);
@@ -418,6 +424,20 @@ void main() {
         }
       }
       expect(strokedSin.convexityType, SPathConvexityType.kConcave);
+    });
+
+    /// Regression test for https://github.com/flutter/flutter/issues/66560.
+    test('Quadratic', () {
+      final SurfacePath path = SurfacePath();
+      path.moveTo(100.0, 0.0);
+      path.quadraticBezierTo(200.0, 0.0, 200.0, 100.0);
+      path.quadraticBezierTo(200.0, 200.0, 100.0, 200.0);
+      path.quadraticBezierTo(0.0, 200.0, 0.0, 100.0);
+      path.quadraticBezierTo(0.0, 0.0, 100.0, 0.0);
+      path.close();
+      expect(path.contains(Offset(100, 20)), true);
+      expect(path.contains(Offset(100, 120)), true);
+      expect(path.contains(Offset(100, -10)), false);
     });
   });
 }

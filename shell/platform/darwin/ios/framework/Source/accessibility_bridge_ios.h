@@ -5,6 +5,7 @@
 #ifndef SHELL_PLATFORM_IOS_FRAMEWORK_SOURCE_ACCESSIBILITY_BRIDGE_IOS_H_
 #define SHELL_PLATFORM_IOS_FRAMEWORK_SOURCE_ACCESSIBILITY_BRIDGE_IOS_H_
 
+#include <memory>
 #include <vector>
 
 #include "flutter/lib/ui/semantics/semantics_node.h"
@@ -25,13 +26,18 @@ class AccessibilityBridgeIos {
                                        flutter::SemanticsAction action,
                                        std::vector<uint8_t> args) = 0;
   /**
-   * A callback that is called after the accessibility focus has moved to a new
-   * SemanticObject.
+   * A callback that is called when a SemanticObject receives focus.
    *
    * The input id is the uid of the newly focused SemanticObject.
    */
-  virtual void AccessibilityFocusDidChange(int32_t id) = 0;
-  virtual FlutterPlatformViewsController* GetPlatformViewsController() const = 0;
+  virtual void AccessibilityObjectDidBecomeFocused(int32_t id) = 0;
+  /**
+   * A callback that is called when a SemanticObject loses focus
+   *
+   * The input id is the uid of the newly focused SemanticObject.
+   */
+  virtual void AccessibilityObjectDidLoseFocus(int32_t id) = 0;
+  virtual std::shared_ptr<FlutterPlatformViewsController> GetPlatformViewsController() const = 0;
 };
 
 }  // namespace flutter

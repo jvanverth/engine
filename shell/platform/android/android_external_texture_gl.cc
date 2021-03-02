@@ -38,7 +38,7 @@ void AndroidExternalTextureGL::Paint(SkCanvas& canvas,
                                      const SkRect& bounds,
                                      bool freeze,
                                      GrDirectContext* context,
-                                     SkFilterQuality filter_quality) {
+                                     const SkSamplingOptions& sampling) {
   if (state_ == AttachmentState::detached) {
     return;
   }
@@ -69,9 +69,7 @@ void AndroidExternalTextureGL::Paint(SkCanvas& canvas,
       transformAroundCenter.postTranslate(0.5, 0.5);
       canvas.concat(transformAroundCenter);
     }
-    SkPaint paint;
-    paint.setFilterQuality(filter_quality);
-    canvas.drawImage(image, 0, 0, &paint);
+    canvas.drawImage(image, 0, 0, sampling, nullptr);
   }
 }
 
@@ -82,6 +80,7 @@ void AndroidExternalTextureGL::UpdateTransform() {
 void AndroidExternalTextureGL::OnGrContextDestroyed() {
   if (state_ == AttachmentState::attached) {
     Detach();
+    glDeleteTextures(1, &texture_name_);
   }
   state_ = AttachmentState::detached;
 }

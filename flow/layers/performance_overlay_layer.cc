@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "flutter/flow/layers/performance_overlay_layer.h"
+
 #include <iomanip>
 #include <iostream>
 #include <string>
 
-#include "flutter/flow/layers/performance_overlay_layer.h"
 #include "third_party/skia/include/core/SkFont.h"
 #include "third_party/skia/include/core/SkTextBlob.h"
 
@@ -72,6 +73,22 @@ PerformanceOverlayLayer::PerformanceOverlayLayer(uint64_t options,
     font_path_ = font_path;
   }
 }
+
+#ifdef FLUTTER_ENABLE_DIFF_CONTEXT
+
+void PerformanceOverlayLayer::Diff(DiffContext* context,
+                                   const Layer* old_layer) {
+  DiffContext::AutoSubtreeRestore subtree(context);
+  if (!context->IsSubtreeDirty()) {
+    FML_DCHECK(old_layer);
+    auto prev = old_layer->as_performance_overlay_layer();
+    context->MarkSubtreeDirty(context->GetOldLayerPaintRegion(prev));
+  }
+  context->AddLayerBounds(paint_bounds());
+  context->SetLayerPaintRegion(this, context->CurrentSubtreeRegion());
+}
+
+#endif  // FLUTTER_ENABLE_DIFF_CONTEXT
 
 void PerformanceOverlayLayer::Paint(PaintContext& context) const {
   const int padding = 8;

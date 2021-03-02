@@ -4,7 +4,10 @@
 
 #import <Flutter/Flutter.h>
 #import <XCTest/XCTest.h>
+
 #import "AppDelegate.h"
+
+FLUTTER_ASSERT_ARC
 
 @interface FlutterViewControllerInitialRouteTest : XCTestCase
 @property(nonatomic, strong) FlutterViewController* flutterViewController;
@@ -21,7 +24,12 @@
 
 - (void)tearDown {
   if (self.flutterViewController) {
-    [self.flutterViewController removeFromParentViewController];
+    XCTestExpectation* vcDismissed = [self expectationWithDescription:@"dismiss"];
+    [self.flutterViewController dismissViewControllerAnimated:NO
+                                                   completion:^{
+                                                     [vcDismissed fulfill];
+                                                   }];
+    [self waitForExpectationsWithTimeout:10.0 handler:nil];
   }
   [super tearDown];
 }
@@ -34,13 +42,14 @@
                                               bundle:nil];
 
   NSObject<FlutterBinaryMessenger>* binaryMessenger = self.flutterViewController.binaryMessenger;
+  __weak typeof(binaryMessenger) weakBinaryMessenger = binaryMessenger;
 
   FlutterBinaryMessengerConnection waitingForStatusConnection = [binaryMessenger
       setMessageHandlerOnChannel:@"waiting_for_status"
             binaryMessageHandler:^(NSData* message, FlutterBinaryReply reply) {
               FlutterMethodChannel* channel = [FlutterMethodChannel
                   methodChannelWithName:@"driver"
-                        binaryMessenger:binaryMessenger
+                        binaryMessenger:weakBinaryMessenger
                                   codec:[FlutterJSONMethodCodec sharedInstance]];
               [channel invokeMethod:@"set_scenario" arguments:@{@"name" : @"initial_route_reply"}];
             }];

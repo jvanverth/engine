@@ -42,15 +42,15 @@ Scene::Scene(std::shared_ptr<flutter::Layer> rootLayer,
              uint32_t rasterizerTracingThreshold,
              bool checkerboardRasterCacheImages,
              bool checkerboardOffscreenLayers) {
+  // Currently only supports a single window.
   auto viewport_metrics = UIDartState::Current()
                               ->platform_configuration()
-                              ->window()
+                              ->get_window(0)
                               ->viewport_metrics();
 
   layer_tree_ = std::make_unique<LayerTree>(
       SkISize::Make(viewport_metrics.physical_width,
                     viewport_metrics.physical_height),
-      static_cast<float>(viewport_metrics.physical_depth),
       static_cast<float>(viewport_metrics.device_pixel_ratio));
   layer_tree_->set_root_layer(std::move(rootLayer));
   layer_tree_->set_rasterizer_tracing_threshold(rasterizerTracingThreshold);

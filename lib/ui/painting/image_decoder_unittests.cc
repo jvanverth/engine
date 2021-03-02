@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "flutter/lib/ui/painting/image_decoder.h"
+
 #include "flutter/common/task_runners.h"
 #include "flutter/fml/mapping.h"
 #include "flutter/fml/synchronization/waitable_event.h"
-#include "flutter/lib/ui/painting/image_decoder.h"
 #include "flutter/lib/ui/painting/multi_frame_codec.h"
 #include "flutter/runtime/dart_vm.h"
 #include "flutter/runtime/dart_vm_lifecycle.h"
@@ -35,8 +36,8 @@ class TestIOManager final : public IOManager {
             task_runner,
             fml::TimeDelta::FromNanoseconds(0))),
         runner_(task_runner),
-        weak_factory_(this),
-        is_gpu_disabled_sync_switch_(std::make_shared<fml::SyncSwitch>()) {
+        is_gpu_disabled_sync_switch_(std::make_shared<fml::SyncSwitch>()),
+        weak_factory_(this) {
     FML_CHECK(task_runner->RunsTasksOnCurrentThread())
         << "The IO manager must be initialized its primary task runner. The "
            "test harness may not be setup correctly/safely.";
@@ -85,8 +86,8 @@ class TestIOManager final : public IOManager {
   fml::RefPtr<SkiaUnrefQueue> unref_queue_;
   fml::WeakPtr<TestIOManager> weak_prototype_;
   fml::RefPtr<fml::TaskRunner> runner_;
-  fml::WeakPtrFactory<TestIOManager> weak_factory_;
   std::shared_ptr<fml::SyncSwitch> is_gpu_disabled_sync_switch_;
+  fml::WeakPtrFactory<TestIOManager> weak_factory_;
 
   FML_DISALLOW_COPY_AND_ASSIGN(TestIOManager);
 };
@@ -555,10 +556,10 @@ TEST(ImageDecoderTest, VerifySimpleDecoding) {
   auto descriptor =
       fml::MakeRefCounted<ImageDescriptor>(std::move(data), std::move(codec));
 
-  ASSERT_EQ(
-      ImageFromCompressedData(descriptor, 6, 2, fml::tracing::TraceFlow(""))
-          ->dimensions(),
-      SkISize::Make(6, 2));
+  ASSERT_EQ(ImageFromCompressedData(descriptor.get(), 6, 2,
+                                    fml::tracing::TraceFlow(""))
+                ->dimensions(),
+            SkISize::Make(6, 2));
 }
 
 TEST(ImageDecoderTest, VerifySubpixelDecodingPreservesExifOrientation) {
@@ -573,8 +574,8 @@ TEST(ImageDecoderTest, VerifySubpixelDecodingPreservesExifOrientation) {
   ASSERT_EQ(SkISize::Make(600, 200), image->dimensions());
 
   auto decode = [descriptor](uint32_t target_width, uint32_t target_height) {
-    return ImageFromCompressedData(descriptor, target_width, target_height,
-                                   fml::tracing::TraceFlow(""));
+    return ImageFromCompressedData(descriptor.get(), target_width,
+                                   target_height, fml::tracing::TraceFlow(""));
   };
 
   auto expected_data = OpenFixtureAsSkData("Horizontal.png");
